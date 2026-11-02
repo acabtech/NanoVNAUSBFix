@@ -59,10 +59,14 @@ if [[ -s "$official_elf" ]] && arm-none-eabi-nm "$official_elf" | grep -q " usbt
   FAIL=1
 fi
 
-# Combined checksum manifest for release uploads.
+# Combined checksum manifest for release uploads. Release assets are uploaded
+# flat, so list bare filenames rather than the dist/<flavor>/ paths.
 (
   cd "$DIST"
-  sha256sum official/NanoVNA-H-1.2.50-USB-PCLK.bin             official/NanoVNA-H-1.2.50-USB-PCLK.hex             official/NanoVNA-H-1.2.50-USB-PCLK.elf             unofficial/NanoVNA-H-1.2.50-USBTMC.bin             unofficial/NanoVNA-H-1.2.50-USBTMC.hex             unofficial/NanoVNA-H-1.2.50-USBTMC.elf > SHA256SUMS
+  for file in official/*.bin official/*.hex official/*.elf \
+              unofficial/*.bin unofficial/*.hex unofficial/*.elf; do
+    sha256sum "$file" | sed 's|  .*/|  |'
+  done > SHA256SUMS
 )
 
 if (( FAIL )); then
