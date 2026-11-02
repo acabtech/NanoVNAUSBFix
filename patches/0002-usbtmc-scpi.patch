@@ -486,10 +486,10 @@ index 9368aa8..27c098f 100644
  
 diff --git a/usbtmc.c b/usbtmc.c
 new file mode 100644
-index 0000000..1000609
+index 0000000..350ab9b
 --- /dev/null
 +++ b/usbtmc.c
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,308 @@
 +/*
 + * NanoVNA-USBFix — USBTMC / SCPI bridge.
 + *
@@ -505,6 +505,8 @@ index 0000000..1000609
 +#include "usbtmc.h"
 +#include "usbcfg.h"
 +#include "nanovna.h"
++
++#include <string.h>
 +
 +#define USBTMC_MAX_CMD      56
 +#define USBTMC_EP_SIZE      64
@@ -593,11 +595,18 @@ index 0000000..1000609
 +  if (!usbtmc_resp_ready || usbtmc_tx_busy) {
 +    return;
 +  }
++  if (usbtmc_resp_offset > usbtmc_resp_len) {
++    usbtmc_resp_offset = usbtmc_resp_len;
++  }
 +  uint32_t remaining = usbtmc_resp_len - usbtmc_resp_offset;
 +  uint32_t chunk = remaining;
 +  if (chunk > requested) {
 +    chunk = requested;
 +  }
++  /* Move this window to the front of the payload area so the header and the
++     chunk are contiguous for usbStartTransmitI(). */
++  uint8_t *payload = USBTMC_RESP_BUF + 12;
++  memmove(payload, payload + usbtmc_resp_offset, chunk);
 +  uint8_t *h = USBTMC_RESP_BUF;
 +  h[0] = USBTMC_MSG_IN;
 +  h[1] = usbtmc_in_tag;
@@ -655,6 +664,7 @@ index 0000000..1000609
 +        left = 0;
 +        break;
 +      }
++      usbtmc_cmd_len = 0;
 +      usbtmc_msg_remaining = (uint32_t)p[4] |
 +                             ((uint32_t)p[5] << 8) |
 +                             ((uint32_t)p[6] << 16) |
@@ -698,7 +708,6 @@ index 0000000..1000609
 +        }
 +        usbtmc_msg_eom = false;
 +        usbtmc_msg_bad = false;
-+        usbtmc_cmd_len = 0;
 +      }
 +      /* Non-EOM chunks continue in the next bulk packet. */
 +    }
