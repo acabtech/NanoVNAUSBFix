@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (for example v1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi binutils-arm-none-eabi \
+            p7zip-full make curl patch
+      - name: Build and verify
+        run: make dist
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: NanoVNA USBFix ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/official/NanoVNA-H-1.2.50-USB-PCLK.bin
+            dist/official/NanoVNA-H-1.2.50-USB-PCLK.hex
+            dist/official/NanoVNA-H-1.2.50-USB-PCLK.elf
+            dist/official/NanoVNA-H-1.2.50-USB-PCLK.map
+            dist/unofficial/NanoVNA-H-1.2.50-USBTMC.bin
+            dist/unofficial/NanoVNA-H-1.2.50-USBTMC.hex
+            dist/unofficial/NanoVNA-H-1.2.50-USBTMC.elf
+            dist/unofficial/NanoVNA-H-1.2.50-USBTMC.map
+            dist/SHA256SUMS

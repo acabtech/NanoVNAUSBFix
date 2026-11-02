@@ -1,0 +1,24 @@
+--- a/NANOVNA_STM32_F072/rtc_v2.c
++++ b/NANOVNA_STM32_F072/rtc_v2.c
+@@ -147,7 +147,8 @@ void rtc_init(void){
+   uint32_t rtc_prer = (src == STM32_RTCSEL_LSE) ? STM32_RTC_LSE_PRER :
+                                                   STM32_RTC_LSI_PRER;
+   // If calendar has not been initialized yet then proceed with the initial setup.
+-  if ((RTC->ISR & RTC_ISR_INITS) == 0 || RTC->PRER != rtc_prer) {
++  bool first_init = (RTC->ISR & RTC_ISR_INITS) == 0;
++  if (first_init || RTC->PRER != rtc_prer) {
+     if (rtc_enter_init()){
+       RTC->CR   = 0
+ //              | RTC_CR_COSEL    // RTC output 1Hz (or 512Hz if disabled)
+@@ -155,6 +156,11 @@ void rtc_init(void){
+       RTC->ISR  = RTC_ISR_INIT;     // Clearing all but RTC_ISR_INIT.
+       RTC->PRER = rtc_prer;         // Prescaler value loaded in registers 2 times
+       RTC->PRER = rtc_prer;
++      // Default calendar when the RTC has never been set: 2026-11-01 00:00:00
++      if (first_init) {
++        RTC->TR = 0x00000000;       // 00:00:00
++        RTC->DR = 0x002611E1;       // 2026-11-01, Sunday (BCD)
++      }
+     }
+     // Finalizing of configuration procedure.
+     rtc_exit_init();

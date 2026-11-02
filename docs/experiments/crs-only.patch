@@ -1,0 +1,17 @@
+--- ChibiOS/os/hal/ports/STM32/STM32F0xx/hal_lld.c	2023-12-22 22:56:57.271143200 +0700
++++ NanoVNA-H-1.2.50/ChibiOS/os/hal/ports/STM32/STM32F0xx/hal_lld.c	2026-11-02 19:09:33.406467931 +0700
+@@ -301,6 +301,14 @@
+   RCC->CR2 |= RCC_CR2_HSI48ON;
+   while (!(RCC->CR2 & RCC_CR2_HSI48RDY))
+     ;                                       /* Waits until HSI48 is stable. */
++
++  /* CRS: trim HSI48 against the USB SOF so the USB clock stays within
++     the +/-0.25% required for full-speed enumeration. */
++  RCC->APB1ENR |= RCC_APB1ENR_CRSEN;
++  CRS->CFGR = (47999U << CRS_CFGR_RELOAD_Pos) |
++              (0x22U  << CRS_CFGR_FELIM_Pos)  |
++              CRS_CFGR_SYNCSRC_1;
++  CRS->CR   = CRS_CR_AUTOTRIMEN | CRS_CR_CEN;
+ #endif
+ 
+ #if STM32_LSI_ENABLED

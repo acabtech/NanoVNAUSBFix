@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a firmware, USB enumeration or USBTMC problem
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. Please include enough detail to reproduce the problem.
+  - type: input
+    id: asset
+    attributes:
+      label: Firmware asset
+      description: Exact release asset name and SHA-256 line, if available.
+      placeholder: NanoVNA-H-1.2.50-USB-PCLK.bin
+    validations:
+      required: true
+  - type: dropdown
+    id: flavor
+    attributes:
+      label: Flavor
+      options:
+        - Official (USB-PCLK)
+        - Unofficial (USBTMC)
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host OS / kernel / libusb
+      placeholder: Arch Linux 6.12, libusb 1.0.27
+    validations:
+      required: true
+  - type: textarea
+    id: lsusb
+    attributes:
+      label: lsusb -v output
+      description: For 0483:5740 or 0483:df11.
+      render: shell
+  - type: textarea
+    id: dmesg
+    attributes:
+      label: dmesg around plug-in
+      render: shell
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps and observed result
+      placeholder: |
+        1. Flashed ...
+        2. Ran ...
+        3. Expected ..., got ...
+    validations:
+      required: true

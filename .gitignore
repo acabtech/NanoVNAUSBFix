@@ -1,0 +1,17 @@
+# Build products
+build/
+dist/
+
+# Upstream source cache / working trees
+vendor/
+upstream/
+
+# Editor and OS noise
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local tooling
+.venv/
+__pycache__/

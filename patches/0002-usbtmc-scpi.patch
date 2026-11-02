@@ -1,0 +1,834 @@
+diff --git a/Makefile b/Makefile
+index 29366b0..d4596b7 100644
+--- a/Makefile
++++ b/Makefile
+@@ -18,6 +18,11 @@ USE_OPT = -O2 -fno-inline-small-functions -ggdb -fomit-frame-pointer -falign-fun
+ USE_OPT = -O2 -fno-inline-small-functions -ggdb -fomit-frame-pointer -falign-functions=16 --specs=nano.specs -fstack-usage -std=c11
+  endif
+ endif
++# Unofficial build: expose the VNA over USBTMC.
++ifeq ($(USBTMC),yes)
++USE_OPT += -DNANOVNA_USBTMC
++endif
++
+ # additional options, use math optimisations
+ USE_OPT+= -ffast-math -fsingle-precision-constant
+ #USE_OPT+= -D__MS5351__
+@@ -163,7 +168,7 @@ CSRC = $(STARTUPSRC) \
+        fonts/Font6x10.c \
+        fonts/Font7x11b.c \
+        fonts/Font11x14.c \
+-       usbcfg.c \
++       usbcfg.c usbtmc.c \
+        main.c common.c si5351.c tlv320aic3204.c dsp.c plot.c ui.c lcd.c data_storage.c hardware.c vna_math.c
+ 
+ # C++ sources that can be compiled in ARM or THUMB mode depending on the global
+diff --git a/chconf.h b/chconf.h
+index 16f1217..09c3169 100644
+--- a/chconf.h
++++ b/chconf.h
+@@ -183,7 +183,7 @@
+  *
+  * @note    The default is @p TRUE.
+  */
+-#define CH_CFG_USE_MUTEXES                  FALSE
++#define CH_CFG_USE_MUTEXES                  TRUE
+ 
+ /**
+  * @brief   Enables recursive behavior on mutexes.
+diff --git a/main.c b/main.c
+index 72e99bc..2868ad1 100644
+--- a/main.c
++++ b/main.c
+@@ -25,6 +25,7 @@
+ #include "usbcfg.h"
+ #include "si5351.h"
+ #include "nanovna.h"
++#include "usbtmc.h"
+ 
+ #include <chprintf.h>
+ #include <string.h>
+@@ -38,6 +39,7 @@
+ 
+ static BaseSequentialStream *shell_stream = 0;
+ threads_queue_t shell_thread;
++MUTEX_DECL(shell_io_mutex);
+ 
+ // Shell new line
+ #define VNA_SHELL_NEWLINE_STR    "\r\n"
+@@ -239,6 +241,14 @@ static THD_FUNCTION(Thread1, arg)
+   while (1) {
+     bool completed = false;
+     uint16_t mask = get_sweep_mask();
++    /* Service CDC shell requests queued by the main thread first. */
++    while (shell_function) {
++      shell_function(shell_nargs - 1, &shell_args[1]);
++      shell_function = 0;
++      osalThreadDequeueNextI(&shell_thread, MSG_OK);
++    }
++    /* Then run at most one USBTMC command between sweeps. */
++    usbtmc_process();
+     if (sweep_mode&(SWEEP_ENABLE|SWEEP_ONCE)) {
+       completed = sweep(true, mask);
+       sweep_mode&=~SWEEP_ONCE;
+@@ -251,29 +261,33 @@ static THD_FUNCTION(Thread1, arg)
+       shell_function = 0;
+       osalThreadDequeueNextI(&shell_thread, MSG_OK);
+     }
+-    // Process UI inputs
+-    sweep_mode|= SWEEP_UI_MODE;
+-    ui_process();
+-    sweep_mode&=~SWEEP_UI_MODE;
+-    // Process collected data, calculate trace coordinates and plot only if scan completed
+-    if (completed) {
++    /* The USBTMC response lives in the LCD scratch buffer; pause drawing
++       until the host has collected it. */
++    if (!usbtmc_response_pending()) {
++      // Process UI inputs
++      sweep_mode|= SWEEP_UI_MODE;
++      ui_process();
++      sweep_mode&=~SWEEP_UI_MODE;
++      // Process collected data, calculate trace coordinates and plot only if scan completed
++      if (completed) {
+ #ifdef __USE_SMOOTH__
+-//    START_PROFILE;
+-      if (smooth_factor)
+-        measurementDataSmooth(mask);
+-//    STOP_PROFILE;
+-#endif
+-//      START_PROFILE
+-      if ((props_mode & DOMAIN_MODE) == DOMAIN_TIME) transform_domain(mask);
++//      START_PROFILE;
++        if (smooth_factor)
++          measurementDataSmooth(mask);
+ //      STOP_PROFILE;
+-      // Prepare draw graphics, cache all lines, mark screen cells for redraw
+-      request_to_redraw(REDRAW_PLOT);
+-    }
+-    request_to_redraw(REDRAW_BATTERY);
+-#ifndef DEBUG_CONSOLE_SHOW
+-    // plot trace and other indications as raster
+-    draw_all();
+ #endif
++//        START_PROFILE
++        if ((props_mode & DOMAIN_MODE) == DOMAIN_TIME) transform_domain(mask);
++//        STOP_PROFILE;
++        // Prepare draw graphics, cache all lines, mark screen cells for redraw
++        request_to_redraw(REDRAW_PLOT);
++      }
++      request_to_redraw(REDRAW_BATTERY);
++#ifndef DEBUG_CONSOLE_SHOW
++      // plot trace and other indications as raster
++      draw_all();
++#endif
++    }
+   }
+ }
+ 
+@@ -3170,6 +3184,227 @@ static const VNAShellCommand *VNAShell_parceLine(char *line){
+   return NULL;
+ }
+ 
++
++/*
++ * Memory-backed shell stream used to capture command output for USBTMC.
++ */
++typedef struct {
++  BaseSequentialStream stream;
++  char *buf;
++  int size;
++  int len;
++} UsbMemStream;
++
++static size_t usb_mem_write(void *ip, const uint8_t *bp, size_t n) {
++  UsbMemStream *s = (UsbMemStream *)ip;
++  if (s->buf != NULL) {
++    int space = s->size - s->len;
++    int copy = (int)n;
++    if (copy > space) copy = space;
++    if (copy > 0) {
++      memcpy(s->buf + s->len, bp, copy);
++      s->len += copy;
++    }
++  }
++  return n;
++}
++static size_t usb_mem_read(void *ip, uint8_t *bp, size_t n) {
++  (void)ip; (void)bp; (void)n;
++  return 0;
++}
++static msg_t usb_mem_put(void *ip, uint8_t b) {
++  (void)ip; (void)b;
++  return MSG_OK;
++}
++static msg_t usb_mem_get(void *ip) {
++  (void)ip;
++  return MSG_RESET;
++}
++static const struct BaseSequentialStreamVMT usb_mem_vmt = {
++  usb_mem_write, usb_mem_read, usb_mem_put, usb_mem_get
++};
++
++/* Execute one VNA shell command and capture its output (or discard it). */
++static int usb_run_shell(char *line, char *out, int max) {
++  UsbMemStream ms;
++  char *args[VNA_SHELL_MAX_ARGUMENTS + 1];
++  BaseSequentialStream *saved;
++  int n;
++
++  ms.stream.vmt = &usb_mem_vmt;
++  ms.buf = out;
++  ms.size = max;
++  ms.len = 0;
++
++  n = parse_line(line, args, ARRAY_COUNT(args));
++  if (n > (int)ARRAY_COUNT(args))
++    n = ARRAY_COUNT(args);
++
++  chMtxLock(&shell_io_mutex);
++  saved = shell_stream;
++  shell_stream = (BaseSequentialStream *)&ms;
++  if (n > 0) {
++    const VNAShellCommand *scp;
++    for (scp = commands; scp->sc_name != NULL; scp++)
++      if (get_str_index(scp->sc_name, args[0]) == 0)
++        break;
++    if (scp->sc_name != NULL)
++      scp->sc_function(n - 1, &args[1]);
++    else
++      shell_printf("%s?" VNA_SHELL_NEWLINE_STR, args[0]);
++  }
++  shell_stream = saved;
++  chMtxUnlock(&shell_io_mutex);
++
++  if (out != NULL && ms.len < max)
++    out[ms.len] = 0;
++  return ms.len;
++}
++
++static bool usb_ci_prefix(const char *s, const char *prefix) {
++  while (*prefix) {
++    char a = *s++, b = *prefix++;
++    if (a >= 'a' && a <= 'z') a -= 32;
++    if (b >= 'a' && b <= 'z') b -= 32;
++    if (a != b) return false;
++  }
++  return true;
++}
++
++static char *usb_skip_space(char *p) {
++  while (*p == ' ' || *p == '\t') p++;
++  return p;
++}
++
++static int usb_format_data(char *resp, int max, int sel, int start, int count) {
++  int n = 0;
++  if (sel < 0 || sel > 1) sel = 0;
++  if (start < 0) start = 0;
++  if (start >= sweep_points) return 0;
++  if (count < 0 || start + count > sweep_points) count = sweep_points - start;
++  for (int i = start; i < start + count; i++) {
++    int room = max - n;
++    if (room <= 0) break;
++    int w = plot_printf(resp + n, room, "%u,%f,%f" VNA_SHELL_NEWLINE_STR,
++                       getFrequency(i), measured[sel][i][0], measured[sel][i][1]);
++    if (w <= 0) break;
++    n += w;
++  }
++  if (n >= max) n = max - 1;
++  resp[n] = 0;
++  return n;
++}
++
++/*
++ * The SCPI-style command surface implemented by the unofficial firmware.
++ * Anything not covered here is still reachable through :VNA:CMD / :VNA:CMD?.
++ */
++int vna_usb_scpi_exec(char *line, char *resp, int max) {
++  char *p = line;
++  char *end;
++  char cmd[VNA_SHELL_MAX_LENGTH];
++
++  if (max <= 0) return 0;
++  resp[0] = 0;
++
++  while (*p == ' ' || *p == '\t') p++;
++  end = p + strlen(p);
++  while (end > p && (end[-1] == '\r' || end[-1] == '\n' ||
++                     end[-1] == ' ' || end[-1] == '\t')) *--end = 0;
++  if (*p == 0) return 0;
++
++  if (usb_ci_prefix(p, "*IDN?"))
++    return plot_printf(resp, max, "NanoVNA-H,USBFix," VERSION ",00000000" VNA_SHELL_NEWLINE_STR);
++  if (usb_ci_prefix(p, "*OPC?"))
++    return plot_printf(resp, max, "1" VNA_SHELL_NEWLINE_STR);
++  if (usb_ci_prefix(p, "*CLS"))
++    return 0;
++  if (usb_ci_prefix(p, "*RST"))
++    return 0;
++  if (usb_ci_prefix(p, ":SYST:ERR?"))
++    return plot_printf(resp, max, "0,\"No error\"" VNA_SHELL_NEWLINE_STR);
++
++  /* Generic escape hatch: run any NanoVNA shell command. */
++  if (usb_ci_prefix(p, ":VNA:CMD?")) {
++    char *arg = usb_skip_space(p + 9);
++    if (*arg == 0)
++      return plot_printf(resp, max, "-109,\"Missing parameter\"" VNA_SHELL_NEWLINE_STR);
++    strncpy(cmd, arg, sizeof(cmd) - 1);
++    cmd[sizeof(cmd) - 1] = 0;
++    return usb_run_shell(cmd, resp, max);
++  }
++  if (usb_ci_prefix(p, ":VNA:CMD")) {
++    char *arg = usb_skip_space(p + 8);
++    if (*arg == 0)
++      return plot_printf(resp, max, "-109,\"Missing parameter\"" VNA_SHELL_NEWLINE_STR);
++    strncpy(cmd, arg, sizeof(cmd) - 1);
++    cmd[sizeof(cmd) - 1] = 0;
++    usb_run_shell(cmd, NULL, 0);
++    return 0;
++  }
++
++  /* Structured convenience commands. */
++  if (usb_ci_prefix(p, ":VNA:SWE:START?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, get_sweep_frequency(ST_START));
++  if (usb_ci_prefix(p, ":VNA:SWE:STOP?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, get_sweep_frequency(ST_STOP));
++  if (usb_ci_prefix(p, ":VNA:SWE:POINTS?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, sweep_points);
++  if (usb_ci_prefix(p, ":VNA:SWE:START")) {
++    plot_printf(cmd, sizeof(cmd), "sweep start %u", my_atoui(usb_skip_space(p + 14)));
++    usb_run_shell(cmd, NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:SWE:STOP")) {
++    plot_printf(cmd, sizeof(cmd), "sweep stop %u", my_atoui(usb_skip_space(p + 13)));
++    usb_run_shell(cmd, NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:SWE:POINTS")) {
++    plot_printf(cmd, sizeof(cmd), "sweep 0 0 %u", my_atoui(usb_skip_space(p + 15)));
++    usb_run_shell(cmd, NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:SWE:EXEC")) {
++    plot_printf(cmd, sizeof(cmd), "scan %u %u %u 0",
++               get_sweep_frequency(ST_START), get_sweep_frequency(ST_STOP), sweep_points);
++    usb_run_shell(cmd, NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:FREQ?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, get_sweep_frequency(ST_CW));
++  if (usb_ci_prefix(p, ":VNA:FREQ")) {
++    plot_printf(cmd, sizeof(cmd), "freq %u", my_atoui(usb_skip_space(p + 9)));
++    usb_run_shell(cmd, NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:PAUSE")) {
++    usb_run_shell("pause", NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:RESUME")) {
++    usb_run_shell("resume", NULL, 0);
++    return 0;
++  }
++
++  if (usb_ci_prefix(p, ":VNA:DATA:CHUNK?")) {
++    char *arg = usb_skip_space(p + 16);
++    int sel = my_atoui(arg);
++    char *comma = strchr(arg, ',');
++    int start = comma ? my_atoui(comma + 1) : 0;
++    comma = comma ? strchr(comma + 1, ',') : NULL;
++    int count = comma ? my_atoui(comma + 1) : 32;
++    return usb_format_data(resp, max, sel, start, count);
++  }
++  if (usb_ci_prefix(p, ":VNA:DATA?")) {
++    char *arg = usb_skip_space(p + 10);
++    int sel = *arg ? my_atoui(arg) : 0;
++    return usb_format_data(resp, max, sel, 0, SWEEP_POINTS_MAX);
++  }
++
++  return plot_printf(resp, max, "-113,\"Undefined header\"" VNA_SHELL_NEWLINE_STR);
++}
++
+ //
+ // Read command line from shell_stream
+ //
+@@ -3424,11 +3659,16 @@ int main(void)
+       chThdWait(shelltp);
+ #else
+       do {
++        chMtxLock(&shell_io_mutex);
+         shell_printf(VNA_SHELL_PROMPT_STR);
+         if (VNAShell_readLine(shell_line, VNA_SHELL_MAX_LENGTH))
+           VNAShell_executeLine(shell_line);
+-        else
++        else {
++          chMtxUnlock(&shell_io_mutex);
+           chThdSleepMilliseconds(200);
++          continue;
++        }
++        chMtxUnlock(&shell_io_mutex);
+       } while (shell_check_connect());
+ #endif
+     }
+diff --git a/usbcfg.c b/usbcfg.c
+index 9368aa8..27c098f 100644
+--- a/usbcfg.c
++++ b/usbcfg.c
+@@ -16,6 +16,7 @@
+ 
+ #include "hal.h"
+ #include "nanovna.h"
++#include "usbtmc.h"
+ 
+ /* Virtual serial port over USB.*/
+ SerialUSBDriver SDU1;
+@@ -38,7 +39,7 @@ enum {
+  */
+ static const uint8_t vcom_device_descriptor_data[18] = {
+   USB_DESC_DEVICE       (0x0110,        /* bcdUSB (1.1).                    */
+-                         0x02,          /* bDeviceClass (CDC).              */
++                         0x00,          /* bDeviceClass (per-interface).    */
+                          0x00,          /* bDeviceSubClass.                 */
+                          0x00,          /* bDeviceProtocol.                 */
+                          0x40,          /* bMaxPacketSize.                  */
+@@ -60,10 +61,10 @@ static const USBDescriptor vcom_device_descriptor = {
+ };
+ 
+ /* Configuration Descriptor tree for a CDC.*/
+-static const uint8_t vcom_configuration_descriptor_data[67] = {
++static const uint8_t vcom_configuration_descriptor_data[97] = {
+   /* Configuration Descriptor.*/
+-  USB_DESC_CONFIGURATION(67,            /* wTotalLength.                    */
+-                         0x02,          /* bNumInterfaces.                  */
++  USB_DESC_CONFIGURATION(97,            /* wTotalLength.                    */
++                         0x03,          /* bNumInterfaces.                  */
+                          0x01,          /* bConfigurationValue.             */
+                          0,             /* iConfiguration.                  */
+                          0xC0,          /* bmAttributes (self powered).     */
+@@ -133,7 +134,30 @@ static const uint8_t vcom_configuration_descriptor_data[67] = {
+   USB_DESC_ENDPOINT     (USBD1_DATA_REQUEST_EP|0x80,    /* bEndpointAddress.*/
+                          0x02,          /* bmAttributes (Bulk).             */
+                          0x0040,        /* wMaxPacketSize.                  */
+-                         0x00)          /* bInterval.                       */
++                         0x00),         /* bInterval.                       */
++  /* USBTMC Interface Descriptor (unofficial USB API firmware). */
++  USB_DESC_INTERFACE    (USBTMC_INTERFACE_NUMBER,
++                         0x00,          /* bAlternateSetting.               */
++                         0x03,          /* bNumEndpoints.                   */
++                         0xFE,          /* bInterfaceClass (USBTMC).        */
++                         0x03,          /* bInterfaceSubClass (USBTMC).     */
++                         0x01,          /* bInterfaceProtocol.              */
++                         0),
++  /* USBTMC Bulk OUT. */
++  USB_DESC_ENDPOINT     (USBTMC_BULK_OUT_EP,
++                         0x02,
++                         0x0040,
++                         0x00),
++  /* USBTMC Bulk IN. */
++  USB_DESC_ENDPOINT     (USBTMC_BULK_IN_EP|0x80,
++                         0x02,
++                         0x0040,
++                         0x00),
++  /* USBTMC Interrupt IN (status). */
++  USB_DESC_ENDPOINT     (USBTMC_INTR_IN_EP|0x80,
++                         0x03,
++                         0x0008,
++                         0x10)
+ };
+ 
+ /*
+@@ -305,6 +329,7 @@ static void usb_event(USBDriver *usbp, usbevent_t event) {
+   chSysLockFromISR();
+   switch (event) {
+   case USB_EVENT_RESET:
++    usbtmc_reset();
+     break;
+   case USB_EVENT_ADDRESS:
+     break;
+@@ -316,10 +341,13 @@ static void usb_event(USBDriver *usbp, usbevent_t event) {
+     usbInitEndpointI(usbp, USBD1_INTERRUPT_REQUEST_EP, &ep2config);
+     /* Resetting the state of the CDC subsystem.*/
+     sduConfigureHookI(&SDU1);
++    /* Bring up the unofficial USBTMC interface as well. */
++    usbtmc_configure(usbp);
+     break;
+   case USB_EVENT_SUSPEND:
+     /* Disconnection event on suspend.*/
+     sduDisconnectI(&SDU1);
++    usbtmc_reset();
+     break;
+   case USB_EVENT_WAKEUP:
+     break;
+@@ -340,13 +368,22 @@ static void sof_handler(USBDriver *usbp) {
+   osalSysUnlockFromISR();
+ }
+ 
++/*
++ * Composite request hook: USBTMC class requests first, then CDC.
++ */
++static bool usb_requests_hook(USBDriver *usbp) {
++  if (usbtmc_requests_hook(usbp))
++    return true;
++  return sduRequestsHook(usbp);
++}
++
+ /*
+  * USB driver configuration.
+  */
+ const USBConfig usbcfg = {
+   usb_event,
+   get_descriptor,
+-  sduRequestsHook,
++  usb_requests_hook,
+   sof_handler
+ };
+ 
+diff --git a/usbtmc.c b/usbtmc.c
+new file mode 100644
+index 0000000..1000609
+--- /dev/null
++++ b/usbtmc.c
+@@ -0,0 +1,299 @@
++/*
++ * NanoVNA-USBFix — USBTMC / SCPI bridge.
++ *
++ * Copyright (C) 2026 acabtech
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ *
++ * The USB interrupt path only frames bulk messages and queues one command.
++ * Command execution and response formatting happen in the sweep thread via
++ * usbtmc_process(), so VNA internals are never touched from an ISR.
++ */
++
++#include "hal.h"
++#include "usbtmc.h"
++#include "usbcfg.h"
++#include "nanovna.h"
++
++#define USBTMC_MAX_CMD      56
++#define USBTMC_EP_SIZE      64
++
++/* The response buffer borrows the LCD scratch buffer. Drawing is paused while
++   a response is pending (see usbtmc_response_pending), so the two never
++   overlap. */
++#define USBTMC_RESP_BUF     ((uint8_t *)spi_buffer)
++#define USBTMC_MAX_RESP     (SPI_BUFFER_SIZE * LCD_PIXEL_SIZE - 12)
++
++#define USBTMC_MSG_OUT      1
++#define USBTMC_MSG_IN       2
++#define USBTMC_EOM          0x01
++
++static USBInEndpointState  usbtmc_in_state;
++static USBOutEndpointState usbtmc_out_state;
++static USBInEndpointState  usbtmc_intr_state;
++
++static const USBEndpointConfig usbtmc_bulk_config = {
++  USB_EP_MODE_TYPE_BULK,
++  NULL,
++  usbtmc_data_transmitted,
++  usbtmc_data_received,
++  USBTMC_EP_SIZE,
++  USBTMC_EP_SIZE,
++  &usbtmc_in_state,
++  &usbtmc_out_state
++};
++
++static const USBEndpointConfig usbtmc_intr_config = {
++  USB_EP_MODE_TYPE_INTR,
++  NULL,
++  NULL,
++  NULL,
++  0x0008,
++  0x0000,
++  &usbtmc_intr_state,
++  NULL
++};
++
++static uint8_t  usbtmc_out_buf[USBTMC_EP_SIZE];
++static uint8_t  usbtmc_cmd_buf[USBTMC_MAX_CMD];
++
++static volatile uint32_t usbtmc_cmd_len;
++static volatile bool     usbtmc_cmd_ready;
++
++static volatile uint32_t usbtmc_resp_len;
++static volatile uint32_t usbtmc_resp_offset;
++static volatile bool     usbtmc_resp_ready;
++static volatile bool     usbtmc_tx_busy;
++static volatile bool     usbtmc_in_pending;
++static volatile uint8_t  usbtmc_in_tag;
++static volatile uint32_t usbtmc_in_length;
++
++/* Incoming message parser state. */
++static uint32_t usbtmc_msg_remaining;
++static bool     usbtmc_msg_eom;
++static bool     usbtmc_msg_bad;
++
++static void usbtmc_arm_out(USBDriver *usbp) {
++  usbStartReceiveI(usbp, USBTMC_BULK_OUT_EP, usbtmc_out_buf, sizeof(usbtmc_out_buf));
++}
++
++void usbtmc_reset(void) {
++  usbtmc_cmd_len = 0;
++  usbtmc_cmd_ready = false;
++  usbtmc_resp_len = 0;
++  usbtmc_resp_offset = 0;
++  usbtmc_resp_ready = false;
++  usbtmc_tx_busy = false;
++  usbtmc_in_pending = false;
++  usbtmc_msg_remaining = 0;
++  usbtmc_msg_eom = false;
++  usbtmc_msg_bad = false;
++}
++
++void usbtmc_configure(USBDriver *usbp) {
++  usbtmc_reset();
++  usbInitEndpointI(usbp, USBTMC_BULK_IN_EP, &usbtmc_bulk_config);
++  usbInitEndpointI(usbp, USBTMC_INTR_IN_EP, &usbtmc_intr_config);
++  usbtmc_arm_out(usbp);
++}
++
++/* Queue a response and start it if the host is already waiting. */
++static void usbtmc_start_response(USBDriver *usbp, uint32_t requested) {
++  if (!usbtmc_resp_ready || usbtmc_tx_busy) {
++    return;
++  }
++  uint32_t remaining = usbtmc_resp_len - usbtmc_resp_offset;
++  uint32_t chunk = remaining;
++  if (chunk > requested) {
++    chunk = requested;
++  }
++  uint8_t *h = USBTMC_RESP_BUF;
++  h[0] = USBTMC_MSG_IN;
++  h[1] = usbtmc_in_tag;
++  h[2] = (uint8_t)~usbtmc_in_tag;
++  h[3] = 0;
++  h[4] = (uint8_t)(chunk & 0xFF);
++  h[5] = (uint8_t)((chunk >> 8) & 0xFF);
++  h[6] = (uint8_t)((chunk >> 16) & 0xFF);
++  h[7] = (uint8_t)((chunk >> 24) & 0xFF);
++  h[8] = (chunk == remaining) ? USBTMC_EOM : 0;
++  h[9] = 0;
++  h[10] = 0;
++  h[11] = 0;
++  usbtmc_resp_offset += chunk;
++  if (usbtmc_resp_offset >= usbtmc_resp_len) {
++    usbtmc_resp_ready = false;
++  }
++  usbtmc_tx_busy = true;
++  usbtmc_in_pending = false;
++  usbStartTransmitI(usbp, USBTMC_BULK_IN_EP, USBTMC_RESP_BUF, 12 + chunk);
++}
++
++void usbtmc_data_received(USBDriver *usbp, usbep_t ep) {
++  (void)ep;
++  size_t n = usbGetReceiveTransactionSizeX(usbp, USBTMC_BULK_OUT_EP);
++  const uint8_t *p = usbtmc_out_buf;
++  size_t left = n;
++
++  while (left > 0) {
++    if (usbtmc_msg_remaining == 0 && !usbtmc_msg_eom) {
++      /* Looking for a 12-byte USBTMC bulk-out header. */
++      if (left < 12) {
++        /* Short header: keep it simple and drop the malformed message. */
++        usbtmc_msg_bad = true;
++        left = 0;
++        break;
++      }
++      if (p[0] == USBTMC_MSG_IN) {
++        /* REQUEST_DEV_DEP_MSG_IN: the host wants the next response chunk. */
++        usbtmc_in_tag = p[1];
++        usbtmc_in_length = (uint32_t)p[4] |
++                           ((uint32_t)p[5] << 8) |
++                           ((uint32_t)p[6] << 16) |
++                           ((uint32_t)p[7] << 24);
++        usbtmc_in_pending = true;
++        if (usbtmc_resp_ready && !usbtmc_tx_busy) {
++          usbtmc_start_response(usbp, usbtmc_in_length);
++        }
++        p += 12;
++        left -= 12;
++        continue;
++      }
++      if (p[0] != USBTMC_MSG_OUT) {
++        usbtmc_msg_bad = true;
++        left = 0;
++        break;
++      }
++      usbtmc_msg_remaining = (uint32_t)p[4] |
++                             ((uint32_t)p[5] << 8) |
++                             ((uint32_t)p[6] << 16) |
++                             ((uint32_t)p[7] << 24);
++      usbtmc_msg_eom = (p[8] & USBTMC_EOM) != 0;
++      if (usbtmc_msg_remaining == 0) {
++        /* Zero-length write: dispatch immediately. */
++        if (!usbtmc_msg_bad) {
++          usbtmc_cmd_len = 0;
++          usbtmc_cmd_ready = true;
++        }
++        usbtmc_msg_eom = false;
++        usbtmc_msg_bad = false;
++      }
++      p += 12;
++      left -= 12;
++      continue;
++    }
++
++    size_t take = left;
++    if (take > usbtmc_msg_remaining) {
++      take = usbtmc_msg_remaining;
++    }
++    if (!usbtmc_msg_bad) {
++      for (size_t i = 0; i < take; i++) {
++        if (usbtmc_cmd_len < USBTMC_MAX_CMD - 1) {
++          usbtmc_cmd_buf[usbtmc_cmd_len++] = p[i];
++        } else {
++          usbtmc_msg_bad = true;
++        }
++      }
++    }
++    p += take;
++    left -= take;
++    usbtmc_msg_remaining -= take;
++
++    if (usbtmc_msg_remaining == 0) {
++      if (usbtmc_msg_eom) {
++        if (!usbtmc_msg_bad) {
++          usbtmc_cmd_ready = true;
++        }
++        usbtmc_msg_eom = false;
++        usbtmc_msg_bad = false;
++        usbtmc_cmd_len = 0;
++      }
++      /* Non-EOM chunks continue in the next bulk packet. */
++    }
++  }
++
++  usbtmc_arm_out(usbp);
++}
++
++void usbtmc_data_transmitted(USBDriver *usbp, usbep_t ep) {
++  (void)usbp;
++  (void)ep;
++  usbtmc_tx_busy = false;
++}
++
++bool usbtmc_requests_hook(USBDriver *usbp) {
++  uint8_t type = usbp->setup.bmRequestType;
++  if ((type & USB_RTYPE_TYPE_MASK) != USB_RTYPE_TYPE_CLASS ||
++      (type & USB_RTYPE_RECIPIENT_MASK) != USB_RTYPE_RECIPIENT_INTERFACE ||
++      usbp->setup.wIndex != USBTMC_INTERFACE_NUMBER) {
++    return false;
++  }
++
++  switch (usbp->setup.bRequest) {
++  case 128: { /* READ_STATUS_BYTE */
++    static uint8_t status[2] = {0, 0};
++    usbSetupTransfer(usbp, status, sizeof(status), NULL);
++    return true;
++  }
++  case 5: { /* INITIATE_CLEAR */
++    static uint8_t clear_status = 0;
++    usbSetupTransfer(usbp, &clear_status, sizeof(clear_status), NULL);
++    return true;
++  }
++  case 6:   /* CHECK_CLEAR_STATUS */
++  case 1:   /* INITIATE_ABORT_BULK_OUT */
++  case 2:   /* CHECK_ABORT_BULK_OUT_STATUS */
++  case 3:   /* INITIATE_ABORT_BULK_IN */
++  case 4: { /* CHECK_ABORT_BULK_IN_STATUS */
++    static uint8_t status[2] = {0, 0};
++    usbSetupTransfer(usbp, status, sizeof(status), NULL);
++    return true;
++  }
++  case 7: { /* GET_CAPABILITIES */
++    static uint8_t caps[3] = {0, 0, 0};
++    usbSetupTransfer(usbp, caps, sizeof(caps), NULL);
++    return true;
++  }
++  default:
++    return false;
++  }
++}
++
++bool usbtmc_response_pending(void) {
++  return usbtmc_resp_ready || usbtmc_tx_busy;
++}
++
++void usbtmc_process(void) {
++  if (usbtmc_cmd_ready) {
++    usbtmc_cmd_ready = false;
++    usbtmc_cmd_buf[usbtmc_cmd_len] = 0;
++
++    int n = vna_usb_scpi_exec((char *)usbtmc_cmd_buf,
++                              (char *)(USBTMC_RESP_BUF + 12),
++                              USBTMC_MAX_RESP);
++    usbtmc_cmd_len = 0;
++    if (n < 0) {
++      n = 0;
++    }
++    usbtmc_resp_len = (uint32_t)n;
++    usbtmc_resp_offset = 0;
++    /* A set-only command (no data) must not leave the display paused. */
++    usbtmc_resp_ready = (n > 0);
++  }
++
++  if (usbtmc_in_pending) {
++    if (!usbtmc_resp_ready && !usbtmc_tx_busy) {
++      /* Query with an empty response: answer with a zero-length message. */
++      usbtmc_resp_len = 0;
++      usbtmc_resp_offset = 0;
++      usbtmc_resp_ready = true;
++    }
++    if (usbtmc_resp_ready && !usbtmc_tx_busy) {
++      osalSysLock();
++      usbtmc_start_response(&USBD1, usbtmc_in_length);
++      osalSysUnlock();
++    }
++  }
++}
++
++/* USBTMC requests are handled by the interface request hook in usbcfg.c. */
+diff --git a/usbtmc.h b/usbtmc.h
+new file mode 100644
+index 0000000..c91893b
+--- /dev/null
++++ b/usbtmc.h
+@@ -0,0 +1,37 @@
++/*
++ * NanoVNA-USBFix — USBTMC transport for the unofficial firmware.
++ *
++ * Copyright (C) 2026 acabtech
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++#ifndef _USBTMC_H_
++#define _USBTMC_H_
++
++#include "hal.h"
++
++/* Interface and endpoint assignments used by usbcfg.c and usbtmc.c. */
++#define USBTMC_INTERFACE_NUMBER   2
++#define USBTMC_BULK_OUT_EP        3
++#define USBTMC_BULK_IN_EP         3
++#define USBTMC_INTR_IN_EP         4
++
++/* Called from the USB configured/reset/suspend events. */
++void usbtmc_configure(USBDriver *usbp);
++void usbtmc_reset(void);
++bool usbtmc_requests_hook(USBDriver *usbp);
++
++/* Endpoint callbacks. */
++void usbtmc_data_received(USBDriver *usbp, usbep_t ep);
++void usbtmc_data_transmitted(USBDriver *usbp, usbep_t ep);
++
++/* Poll from the main thread: executes one pending command, if any. */
++void usbtmc_process(void);
++
++/* True while the response buffer (LCD scratch RAM) must not be reused. */
++bool usbtmc_response_pending(void);
++
++/* Implemented in main.c: run one command and return response bytes. */
++int vna_usb_scpi_exec(char *line, char *resp, int max);
++
++#endif

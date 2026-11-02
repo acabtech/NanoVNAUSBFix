@@ -1,0 +1,11 @@
+--- a/NANOVNA_STM32_F072/mcuconf.h
++++ b/NANOVNA_STM32_F072/mcuconf.h
+@@ -51,7 +51,7 @@
+ #define STM32_PPRE                          STM32_PPRE_DIV1
+ #define STM32_ADCPRE                        STM32_ADCPRE_DIV4
+ #define STM32_MCOSEL                        STM32_MCOSEL_PLLDIV2
+-#define STM32_USBSW                         STM32_USBSW_HSI48
++#define STM32_USBSW                         STM32_USBSW_PCLK
+ #define STM32_CECSW                         STM32_CECSW_HSI
+ //#define STM32_I2C1SW                        STM32_I2C1SW_HSI
+ #define STM32_I2C1SW                        STM32_I2C1SW_SYSCLK

@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build firmware flavors
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi binutils-arm-none-eabi \
+            p7zip-full make curl patch
+      - name: Build and verify
+        run: make dist
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanovna-usbfix
+          path: |
+            dist/official/*.bin
+            dist/official/*.hex
+            dist/official/*.elf
+            dist/unofficial/*.bin
+            dist/unofficial/*.hex
+            dist/unofficial/*.elf
+            dist/SHA256SUMS
+          if-no-files-found: error
