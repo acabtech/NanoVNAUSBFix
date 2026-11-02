@@ -160,7 +160,7 @@ produced for it.
 ## Status and caveats
 
 - The official PCLK image is the known-good fix from the original investigation.
-- The USBTMC build compiles, fits the F072 (95,368-byte image), and implements
+- The USBTMC build compiles, fits comfortably in the F072 flash, and implements
   the USBTMC framing and SCPI surface described in the docs. A hardware
   enumeration/measurement smoke test is still recommended before relying on it
   in production; see [`docs/testing.md`](docs/testing.md).
