@@ -1,3 +1,6 @@
+[![CI](https://github.com/acabtech/NanoVNAUSBFix/actions/workflows/ci.yml/badge.svg)](https://github.com/acabtech/NanoVNAUSBFix/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/acabtech/NanoVNAUSBFix)](https://github.com/acabtech/NanoVNAUSBFix/releases/latest)
+
 # NanoVNA USBFix
 
 Firmware builds for the **NanoVNA-H (STM32F072)** that make USB enumeration
@@ -79,6 +82,11 @@ A generic escape hatch reaches the complete stock command set:
 riglol scpi --usb usb:0x0483:0x5740 ':VNA:CMD? info'
 riglol scpi --usb usb:0x0483:0x5740 ':VNA:CMD scan 1000000 30000000 101 0'
 ```
+
+The matching `omariglol` driver profile (NanoVNA classifier, sweep/data
+operations and the `19_nanovna.sh` example) lives on the
+`feature/NanoVNAUSBFix` branch of
+[`acabtech/omariglol`](https://github.com/acabtech/omariglol/tree/feature/NanoVNAUSBFix).
 
 See [`docs/usb-api.md`](docs/usb-api.md) for the full command surface and
 framing details.
