@@ -26,11 +26,21 @@ USBTMC interface class (`0xFE`/`0x03`), not by a different product ID.
 
 | Command | Response | Notes |
 | --- | --- | --- |
-| `*IDN?` | `NanoVNA-H,USBFix,1.2.50,00000000` | SCPI identification |
-| `*OPC?` | `1` | always complete |
-| `*CLS` | — | clears nothing; accepted for compatibility |
-| `*RST` | — | accepted; does not reset the VNA |
-| `:SYST:ERR?` | `0,"No error"` | no error queue is maintained |
+| `*IDN?` | `NanoVNA-H,USBFix,1.2.50,<24 hex UID>` | SCPI identification; serial comes from the MCU UID |
+| `*OPC?` | `1` | commands run in the sweep thread between sweeps, so the previous measurement is complete when this executes |
+| `*CLS` | — | clears the SCPI error queue |
+| `*RST` | — | clears the error queue, disables averaging and resumes continuous sweep |
+| `:SYST:VERS?` | `1999.0` | SCPI version |
+| `:SYST:ERR?` | `code,"description"` | pops one entry from the error queue |
+| `:SYST:ERR:COUN?` | integer | number of queued errors |
+| `:SYST:BEEP` | — | accepted for SCPI parity; the F072 NanoVNA-H has no beeper |
+| `:SYST:BUILD?` | date/time string | firmware build timestamp |
+| `:SYST:SER?` | 24 hex digits | MCU unique ID |
+
+The error queue holds up to eight entries and uses standard SCPI codes:
+`-113` undefined header, `-109` missing parameter, `-222` data out of range
+and `-200` execution error. `:SYST:ERR?` returns `0,"No error"` when the queue
+is empty.
 
 ## Sweep control
 
@@ -38,14 +48,49 @@ USBTMC interface class (`0xFE`/`0x03`), not by a different product ID.
 | --- | --- | --- |
 | `:VNA:SWE:START <Hz>` | — | set sweep start |
 | `:VNA:SWE:STOP <Hz>` | — | set sweep stop |
-| `:VNA:SWE:POINTS <n>` | — | set point count (up to `SWEEP_POINTS_MAX`, 101 on F072) |
+| `:VNA:SWE:CENT <Hz>` | — | set sweep center |
+| `:VNA:SWE:SPAN <Hz>` | — | set sweep span |
+| `:VNA:SWE:POINTS <n>` | — | set point count; out-of-range values return `-222` |
 | `:VNA:SWE:START?` | integer Hz | current start |
 | `:VNA:SWE:STOP?` | integer Hz | current stop |
-| `:VNA:SWE:POINTS?` | integer | current point count |
+| `:VNA:SWE:CENT?` | integer Hz | current center |
+| `:VNA:SWE:SPAN?` | integer Hz | current span |
+| `:VNA:SWE:POINTS?` | integer | current point count (`SWEEP_POINTS_MAX`, 101 on F072) |
 | `:VNA:SWE:EXEC` | — | run one sweep using the current start/stop/points |
+| `:VNA:SWE:SINGL` | — | pause and run exactly one sweep |
+| `:VNA:SWE:CONT` | — | resume continuous sweep |
+| `:VNA:SWE:PAUS` | — | pause the sweep |
+| `:VNA:SWE:RES` | — | resume the sweep |
+| `:VNA:SWE:ABOR` | — | cancel a pending single sweep and reset averaging |
+| `:VNA:SWE:STAT?` | `RUN` or `PAUSE` | sweep state |
+| `:VNA:SWE:TIME?` | integer ms | duration of the last completed sweep |
+| `:VNA:SWE:RATE?` | integer | points per second from the last completed sweep |
 
 `:VNA:SWE:EXEC` is synchronous from the host's point of view: the response to
-the next query is sent after the sweep has completed.
+the next query is sent after the sweep has completed. Sweep state commands do
+not depend on the device UI.
+
+## Acquisition controls
+
+| Command | Response | Notes |
+| --- | --- | --- |
+| `:VNA:POW <0-3>` | — | set output drive strength; other values return `-222` |
+| `:VNA:POW?` | integer | current output power setting |
+| `:VNA:BAND <Hz>` | — | set IF bandwidth by frequency |
+| `:VNA:BAND?` | integer Hz | current IF bandwidth |
+| `:VNA:AVER ON\|OFF` | — | enable averaging (defaults to 4) or disable it |
+| `:VNA:AVER:STAT <ON\|OFF>` | — | same as `:VNA:AVER` |
+| `:VNA:AVER:STAT?` | `0` or `1` | averaging enabled |
+| `:VNA:AVER:COUN <1-255>` | — | set averaging depth; out-of-range returns `-222` |
+| `:VNA:AVER:COUN?` | integer | current averaging depth |
+| `:VNA:AVER:RES` | — | restart the running average |
+| `:VNA:TRIG:MODE <CONT\|STOP\|SINGL>` | — | continuous, stopped, or single sweep |
+| `:VNA:TRIG:MODE?` | `CONT` or `STOP` | current trigger mode |
+| `:VNA:TRIG:STAT?` | `RUN` or `IDLE` | sweep activity |
+
+Averaging is an exponential moving average computed in place over the
+measurement buffer, so it costs no additional RAM. The first sweep after
+enabling averaging, changing the depth, or `:VNA:AVER:RES` starts fresh.
 
 ## Single frequency / continuous wave
 
@@ -111,12 +156,17 @@ The stock command list includes `scan`, `data`, `frequencies`, `sweep`, `freq`,
 
 ## Error responses
 
-Unsupported or malformed commands return a SCPI-style error string:
+Unsupported or malformed commands return a SCPI-style error string and push
+the same code onto the error queue:
 
 ```
 -113,"Undefined header"
 -109,"Missing parameter"
+-222,"Data out of range"
 ```
+
+The queue is read with `:SYST:ERR?` and cleared by `*CLS`. Malformed commands
+never wedge the transport; every path returns a parseable response.
 
 ## Client notes
 

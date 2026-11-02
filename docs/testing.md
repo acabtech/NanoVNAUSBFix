@@ -50,6 +50,14 @@ The v0.1.0 SCPI command contract and the read-only baseline transcript live in
 transcript on hardware whenever the USBTMC framing or command surface changes,
 and diff it against the previous release.
 
+The M1/M2 command shapes added by
+[`0004-scpi-foundation-sweep-parity.patch`](../patches/0004-scpi-foundation-sweep-parity.patch)
+are recorded in
+[`testing/v0.2.0-scpi-foundation-contract.md`](v0.2.0-scpi-foundation-contract.md).
+That build is 97,904 bytes, still inside the 122,880-byte unofficial budget.
+The contract is firmware-build verified; run it on hardware to confirm the
+per-unit UID and sweep timing fields.
+
 ## Hardware smoke test (recommended)
 
 Use a NanoVNA-H with the unofficial image and a host with libusb access.

@@ -8,7 +8,7 @@ upstream NanoVNA-H 1.2.50
         ├── 0001-usb-clock-pclk.patch
         │       └── official firmware (CDC shell only)
         │
-        └── 0001 + 0002-usbtmc-scpi.patch
+        └── 0001 + 0002 + 0003 + 0004
                 └── unofficial firmware (CDC + USBTMC/SCPI)
 ```
 
@@ -96,6 +96,21 @@ LCD scratch buffer. Drawing is paused while a response is pending
 (`usbtmc_response_pending()`), and resumes once the host has read the EOM chunk.
 The result is zero static RAM growth for the response path; the trade-off is
 that a host which stops reading can briefly freeze the display.
+
+### SCPI state without extra BSS
+
+The v0.1.0 link leaves no free BSS: `_bss_end` is already at the end of RAM, so
+even a few new bytes fail to link. The M1/M2 command state therefore lives in
+`properties_t._reserved1[]`, which upstream does not use:
+
+- averaging depth and restart flag;
+- last sweep duration and point count;
+- a packed eight-entry error queue (4-bit codes) with head and count.
+
+`vna_host_state_init()` clears those words after every property/calibration
+recall, so values copied from flash can never leak into host state. Trace
+averaging itself is computed in place over `measured[][]` as an exponential
+moving average, which also avoids a second sweep buffer.
 
 One consequence: `:VNA:CMD? capture` is not supported, because the screenshot
 command also uses `spi_buffer` internally. Use the CDC interface for screenshots

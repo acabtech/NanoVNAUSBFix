@@ -142,17 +142,17 @@ depends on.
       fix was verified on hardware.
 - [ ] Make the shell escape hatch abortable and add it to the hardware
       regression transcript.
-- [ ] Implement a real SCPI error queue with standard codes; replace the current
+- [x] Implement a real SCPI error queue with standard codes; replace the current
       constant `0,"No error"` response.
-- [ ] Add `*IDN?` build/serial fields sourced from MCU UID and build metadata.
-- [ ] Implement `*OPC?` that waits for the active sweep/calibration, not a
+- [x] Add `*IDN?` build/serial fields sourced from MCU UID and build metadata.
+- [x] Implement `*OPC?` that waits for the active sweep/calibration, not a
       constant `1`.
-- [ ] Implement `:SYST:VERS?`, `:SYST:ERR?`, `:SYST:ERR:COUN?` and
+- [x] Implement `:SYST:VERS?`, `:SYST:ERR?`, `:SYST:ERR:COUN?` and
       `:SYST:BEEP`.
 - [ ] Add a definite-length IEEE-488.2 block response mode for binary data, not
       only ASCII lines.
-- [ ] Make malformed commands non-fatal and always return a parseable error.
-- [ ] Add a `:VNA:ABOR` command that cancels a running sweep/autoset/calibration.
+- [x] Make malformed commands non-fatal and always return a parseable error.
+- [x] Add a `:VNA:ABOR` command that cancels a running sweep/autoset/calibration.
 
 ### Verification
 
@@ -176,16 +176,16 @@ binary data transfer.
 
 ### Sweep and acquisition
 
-- [ ] Add sweep start/stop/center/span commands and queries.
-- [ ] Add point-count query and enforce the F072 `SWEEP_POINTS_MAX` limit with a
+- [x] Add sweep start/stop/center/span commands and queries.
+- [x] Add point-count query and enforce the F072 `SWEEP_POINTS_MAX` limit with a
       clear error rather than silent clamping.
-- [ ] Add CW frequency commands and query (already partially present).
-- [ ] Add single-sweep, continuous-sweep, pause, resume and abort semantics that
+- [x] Add CW frequency commands and query (already partially present).
+- [x] Add single-sweep, continuous-sweep, pause, resume and abort semantics that
       are independent of the UI.
-- [ ] Add sweep status and trigger-mode queries.
-- [ ] Add averaging count, averaging enable and IF bandwidth control.
-- [ ] Add output power control where the hardware supports it.
-- [ ] Expose measured sweep time and points-per-second telemetry.
+- [x] Add sweep status and trigger-mode queries.
+- [x] Add averaging count, averaging enable and IF bandwidth control.
+- [x] Add output power control where the hardware supports it.
+- [x] Expose measured sweep time and points-per-second telemetry.
 
 ### Traces and display model
 

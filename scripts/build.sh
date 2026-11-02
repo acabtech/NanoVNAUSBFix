@@ -28,6 +28,7 @@ case "$VARIANT" in
       patches/0001-usb-clock-pclk.patch
       patches/0002-usbtmc-scpi.patch
       patches/0003-usbtmc-shell-output.patch
+      patches/0004-scpi-foundation-sweep-parity.patch
     )
     ARTIFACT="NanoVNA-H-${UPSTREAM_VERSION}-USBTMC"
     MAKE_ARGS=(TARGET=F072 USBTMC=yes)

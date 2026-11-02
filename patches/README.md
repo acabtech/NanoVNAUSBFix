@@ -21,6 +21,7 @@ source root. `scripts/build.sh` applies them in this order.
 | `0001-usb-clock-pclk.patch` | both flavors | Select PCLK as the USB clock instead of HSI48. Frozen. |
 | `0002-usbtmc-scpi.patch` | unofficial only | Composite CDC + USBTMC interface and the SCPI bridge. |
 | `0003-usbtmc-shell-output.patch` | unofficial only | Route USBTMC shell output per-thread and buffer the `chvprintf()` byte path. Fixes the `:VNA:CMD?` hang and empty responses. |
+| `0004-scpi-foundation-sweep-parity.patch` | unofficial only | M1 SCPI foundation (error queue, `:SYST:*`, UID serial, abort) and M2 sweep/acquisition parity (center/span, single/continuous, status, averaging, IFBW, power, telemetry). Authored by acabtech and @brrrassica. |
 | `optional-rtc-default-time.patch` | not applied | Seed an uninitialised RTC to 2026-11-01 00:00:00. |
 
 ## Regenerating a patch

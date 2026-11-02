@@ -1,0 +1,541 @@
+# NanoVNA-USBFix — M1 SCPI foundation and M2 sweep/acquisition parity
+# Authors: acabtech and @brrrassica
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Applies on top of 0003-usbtmc-shell-output.patch with patch -p1.
+
+--- a/main.c
++++ b/main.c
+@@ -134,6 +134,55 @@
+ // Sweep measured data
+ float measured[2][SWEEP_POINTS_MAX][2];
+ 
++/*
++ * Host-facing SCPI state (averaging, telemetry and the error queue).
++ * Authors: acabtech and @brrrassica.
++ *
++ * The F072 has no spare BSS: the link fails if even a few bytes are added.
++ * properties_t._reserved1[] is unused by upstream, survives in RAM, and is
++ * explicitly zeroed after every property recall by vna_host_state_init().
++ *
++ * Layout:
++ *   [0] bits 0..15 averaging count, bit 16 averaging restart flag
++ *   [1] last completed sweep duration in milliseconds
++ *   [2] point count used by that sweep
++ *   [3] packed 4-bit error codes, oldest at slot head
++ *   [4] bits 0..7 error queue head, bits 8..15 error queue count
++ */
++#define VNA_HOST_STATE      current_props._reserved1
++#define VNA_HOST_AVG        VNA_HOST_STATE[0]
++#define VNA_HOST_SWEEP_MS   VNA_HOST_STATE[1]
++#define VNA_HOST_SWEEP_PTS  VNA_HOST_STATE[2]
++
++static void vna_host_state_init(void) {
++  memset(VNA_HOST_STATE, 0, sizeof(current_props._reserved1));
++  /* One averaging pass (disabled) and a restart flag for the first sweep. */
++  VNA_HOST_AVG = 1u | 0x10000u;
++}
++
++static inline uint16_t vna_avg_count(void) {
++  return (uint16_t)(VNA_HOST_AVG & 0xFFFFu);
++}
++static inline void vna_set_avg_count(uint16_t count) {
++  VNA_HOST_AVG = (VNA_HOST_AVG & 0xFFFF0000u) | count;
++}
++static inline bool vna_avg_restart(void) {
++  return (VNA_HOST_AVG & 0x10000u) != 0;
++}
++static inline void vna_set_avg_restart(bool restart) {
++  if (restart)
++    VNA_HOST_AVG |= 0x10000u;
++  else
++    VNA_HOST_AVG &= ~0x10000u;
++}
++
++static inline float vna_apply_average(float old_value, float new_value) {
++  uint16_t count = vna_avg_count();
++  if (count <= 1 || vna_avg_restart())
++    return new_value;
++  return old_value + (new_value - old_value) / (float)count;
++}
++
+ #undef VERSION
+ #define VERSION "1.2.50"
+ 
+@@ -154,6 +203,7 @@
+   "Architecture: " PORT_ARCHITECTURE_NAME " Core Variant: " PORT_CORE_VARIANT_NAME,
+ //  "Port Info: " PORT_INFO,
+   "Platform: " PLATFORM_NAME,
++  "USBFix: acabtech, @brrrassica",
+   0 // sentinel
+ };
+ 
+@@ -256,7 +306,11 @@
+     /* Then run at most one USBTMC command between sweeps. */
+     usbtmc_process();
+     if (sweep_mode&(SWEEP_ENABLE|SWEEP_ONCE)) {
++      systime_t sweep_started = chVTGetSystemTimeX();
++      uint16_t sweep_point_count = sweep_points;
+       completed = sweep(true, mask);
++      VNA_HOST_SWEEP_MS = ST2MS(chVTGetSystemTimeX() - sweep_started);
++      VNA_HOST_SWEEP_PTS = sweep_point_count;
+       sweep_mode&=~SWEEP_ONCE;
+     } else {
+       __WFI();
+@@ -1026,6 +1080,7 @@
+       caldata_recall(0);   // Try load 0 slot
+   } else
+     caldata_recall(0);   // Try load 0 slot
++  vna_host_state_init();
+   update_frequencies();
+ #ifdef __VNA_MEASURE_MODULE__
+   plot_set_measure_mode(current_props._measure);
+@@ -1041,6 +1096,7 @@
+ 
+ int load_properties(uint32_t id) {
+   int r = caldata_recall(id);
++  vna_host_state_init();
+   update_frequencies();
+ #ifdef __VNA_MEASURE_MODULE__
+   plot_set_measure_mode(current_props._measure);
+@@ -1224,14 +1280,14 @@
+     if (p_sweep < SWEEP_POINTS_MAX){
+       if (mask & SWEEP_CH0_MEASURE){
+         if (mask & SWEEP_APPLY_EDELAY_S11) applyEDelay(electrical_delayS11 * frequency, &data[0]); // Apply e-delay
+-        measured[0][p_sweep][0] = data[0];
+-        measured[0][p_sweep][1] = data[1];
++        measured[0][p_sweep][0] = vna_apply_average(measured[0][p_sweep][0], data[0]);
++        measured[0][p_sweep][1] = vna_apply_average(measured[0][p_sweep][1], data[1]);
+       }
+       if (mask & SWEEP_CH1_MEASURE){
+         if (mask & SWEEP_APPLY_EDELAY_S21) applyEDelay(electrical_delayS21 * frequency, &data[2]); // Apply e-delay
+         if (mask & SWEEP_APPLY_S21_OFFSET) applyOffset(&data[2], offset);
+-        measured[1][p_sweep][0] = data[2];
+-        measured[1][p_sweep][1] = data[3];
++        measured[1][p_sweep][0] = vna_apply_average(measured[1][p_sweep][0], data[2]);
++        measured[1][p_sweep][1] = vna_apply_average(measured[1][p_sweep][1], data[3]);
+       }
+     }
+     if (operation_requested && break_on_operation) break;
+@@ -1253,7 +1309,10 @@
+ //  STOP_PROFILE;
+   // blink LED while scanning
+   palSetPad(GPIOC, GPIOC_LED);
+-  return p_sweep == sweep_points;
++  bool completed = p_sweep == sweep_points;
++  if (completed)
++    vna_set_avg_restart(false);
++  return completed;
+ }
+ 
+ #ifdef ENABLED_DUMP_COMMAND
+@@ -3316,6 +3375,112 @@
+ }
+ 
+ /*
++ * Minimal SCPI error queue. The queue is packed into two reserved property
++ * words so it adds no BSS: eight 4-bit codes, oldest at the head.
++ */
++#define SCPI_ERR_QUEUE_LEN 8
++
++static const char *scpi_error_text(int16_t code) {
++  switch (code) {
++    case -113: return "Undefined header";
++    case -109: return "Missing parameter";
++    case -222: return "Data out of range";
++    case -200: return "Execution error";
++    default:   return "Error";
++  }
++}
++
++static uint8_t scpi_error_code_to_nibble(int16_t code) {
++  switch (code) {
++    case -113: return 1;
++    case -109: return 2;
++    case -222: return 3;
++    case -200: return 4;
++    default:   return 4;
++  }
++}
++
++static int16_t scpi_error_nibble_to_code(uint8_t nibble) {
++  switch (nibble) {
++    case 1: return -113;
++    case 2: return -109;
++    case 3: return -222;
++    case 4: return -200;
++    default: return 0;
++  }
++}
++
++static uint8_t scpi_error_head(void) {
++  return (uint8_t)(VNA_HOST_STATE[4] & 0xFF);
++}
++static uint8_t scpi_error_count(void) {
++  return (uint8_t)((VNA_HOST_STATE[4] >> 8) & 0xFF);
++}
++static void scpi_error_set_index(uint8_t head, uint8_t count) {
++  VNA_HOST_STATE[4] = (uint32_t)head | ((uint32_t)count << 8);
++}
++
++static void scpi_error_push(int16_t code) {
++  uint32_t packed = VNA_HOST_STATE[3];
++  uint8_t head = scpi_error_head();
++  uint8_t count = scpi_error_count();
++  if (count >= SCPI_ERR_QUEUE_LEN) {
++    /* Drop the oldest entry so the newest failure is always visible. */
++    head = (head + 1) % SCPI_ERR_QUEUE_LEN;
++    count--;
++  }
++  uint8_t slot = (head + count) % SCPI_ERR_QUEUE_LEN;
++  uint32_t shift = (uint32_t)slot * 4U;
++  packed = (packed & ~(0xFu << shift)) |
++           ((uint32_t)scpi_error_code_to_nibble(code) << shift);
++  VNA_HOST_STATE[3] = packed;
++  scpi_error_set_index(head, count + 1);
++}
++
++static int16_t scpi_error_pop(void) {
++  uint8_t head = scpi_error_head();
++  uint8_t count = scpi_error_count();
++  if (count == 0)
++    return 0;
++  uint8_t nibble = (uint8_t)((VNA_HOST_STATE[3] >> ((uint32_t)head * 4U)) & 0xFu);
++  scpi_error_set_index((head + 1) % SCPI_ERR_QUEUE_LEN, count - 1);
++  return scpi_error_nibble_to_code(nibble);
++}
++
++static void scpi_error_queue_clear(void) {
++  VNA_HOST_STATE[3] = 0;
++  VNA_HOST_STATE[4] = 0;
++}
++
++static int scpi_error_response(char *resp, int max, int16_t code) {
++  scpi_error_push(code);
++  return plot_printf(resp, max, "%d,\"%s\"" VNA_SHELL_NEWLINE_STR,
++                     code, scpi_error_text(code));
++}
++
++/* Return a deterministic serial derived from the 96-bit MCU unique ID. */
++static int usb_format_uid(char *resp, int max) {
++#ifdef UID_BASE
++  const uint32_t *uid = (const uint32_t *)UID_BASE;
++  return plot_printf(resp, max, "%08X%08X%08X",
++                     (unsigned int)uid[0], (unsigned int)uid[1],
++                     (unsigned int)uid[2]);
++#else
++  (void)resp;
++  (void)max;
++  return 0;
++#endif
++}
++
++static bool usb_parse_u32(char *p, uint32_t *value) {
++  p = usb_skip_space(p);
++  if (*p < '0' || *p > '9')
++    return false;
++  *value = my_atoui(p);
++  return true;
++}
++
++/*
+  * The SCPI-style command surface implemented by the unofficial firmware.
+  * Anything not covered here is still reachable through :VNA:CMD / :VNA:CMD?.
+  */
+@@ -3333,22 +3498,54 @@
+                      end[-1] == ' ' || end[-1] == '\t')) *--end = 0;
+   if (*p == 0) return 0;
+ 
+-  if (usb_ci_prefix(p, "*IDN?"))
+-    return plot_printf(resp, max, "NanoVNA-H,USBFix," VERSION ",00000000" VNA_SHELL_NEWLINE_STR);
+-  if (usb_ci_prefix(p, "*OPC?"))
++  if (usb_ci_prefix(p, "*IDN?")) {
++    char serial[32];
++    usb_format_uid(serial, sizeof(serial));
++    return plot_printf(resp, max, "NanoVNA-H,USBFix," VERSION ",%s"
++                       VNA_SHELL_NEWLINE_STR, serial);
++  }
++  if (usb_ci_prefix(p, "*OPC?")) {
++    /* Commands execute in the sweep thread between sweeps, so there is no
++       queued measurement left when this handler runs. */
+     return plot_printf(resp, max, "1" VNA_SHELL_NEWLINE_STR);
+-  if (usb_ci_prefix(p, "*CLS"))
++  }
++  if (usb_ci_prefix(p, "*CLS")) {
++    scpi_error_queue_clear();
+     return 0;
+-  if (usb_ci_prefix(p, "*RST"))
++  }
++  if (usb_ci_prefix(p, "*RST")) {
++    scpi_error_queue_clear();
++    vna_set_avg_count(1);
++    vna_set_avg_restart(true);
++    usb_run_shell("resume", NULL, 0);
+     return 0;
+-  if (usb_ci_prefix(p, ":SYST:ERR?"))
+-    return plot_printf(resp, max, "0,\"No error\"" VNA_SHELL_NEWLINE_STR);
++  }
++  if (usb_ci_prefix(p, ":SYST:VERS?"))
++    return plot_printf(resp, max, "1999.0" VNA_SHELL_NEWLINE_STR);
++  if (usb_ci_prefix(p, ":SYST:BUILD?"))
++    return plot_printf(resp, max, __DATE__ " " __TIME__ VNA_SHELL_NEWLINE_STR);
++  if (usb_ci_prefix(p, ":SYST:SER?")) {
++    char serial[32];
++    usb_format_uid(serial, sizeof(serial));
++    return plot_printf(resp, max, "%s" VNA_SHELL_NEWLINE_STR, serial);
++  }
++  if (usb_ci_prefix(p, ":SYST:ERR:COUN?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, scpi_error_count());
++  if (usb_ci_prefix(p, ":SYST:ERR?")) {
++    int16_t code = scpi_error_pop();
++    return plot_printf(resp, max, "%d,\"%s\"" VNA_SHELL_NEWLINE_STR,
++                       code, scpi_error_text(code));
++  }
++  if (usb_ci_prefix(p, ":SYST:BEEP")) {
++    /* The F072 NanoVNA-H has no beeper; accept the command for SCPI parity. */
++    return 0;
++  }
+ 
+   /* Generic escape hatch: run any NanoVNA shell command. */
+   if (usb_ci_prefix(p, ":VNA:CMD?")) {
+     char *arg = usb_skip_space(p + 9);
+     if (*arg == 0)
+-      return plot_printf(resp, max, "-109,\"Missing parameter\"" VNA_SHELL_NEWLINE_STR);
++      return scpi_error_response(resp, max, -109);
+     strncpy(cmd, arg, sizeof(cmd) - 1);
+     cmd[sizeof(cmd) - 1] = 0;
+     return usb_run_shell(cmd, resp, max);
+@@ -3356,32 +3553,74 @@
+   if (usb_ci_prefix(p, ":VNA:CMD")) {
+     char *arg = usb_skip_space(p + 8);
+     if (*arg == 0)
+-      return plot_printf(resp, max, "-109,\"Missing parameter\"" VNA_SHELL_NEWLINE_STR);
++      return scpi_error_response(resp, max, -109);
+     strncpy(cmd, arg, sizeof(cmd) - 1);
+     cmd[sizeof(cmd) - 1] = 0;
+     usb_run_shell(cmd, NULL, 0);
+     return 0;
+   }
+ 
+-  /* Structured convenience commands. */
++  /* Sweep geometry. Queries must precede the matching set commands. */
+   if (usb_ci_prefix(p, ":VNA:SWE:START?"))
+     return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, get_sweep_frequency(ST_START));
+   if (usb_ci_prefix(p, ":VNA:SWE:STOP?"))
+     return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, get_sweep_frequency(ST_STOP));
++  if (usb_ci_prefix(p, ":VNA:SWE:CENT?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, get_sweep_frequency(ST_CENTER));
++  if (usb_ci_prefix(p, ":VNA:SWE:SPAN?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, get_sweep_frequency(ST_SPAN));
+   if (usb_ci_prefix(p, ":VNA:SWE:POINTS?"))
+     return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, sweep_points);
++  if (usb_ci_prefix(p, ":VNA:SWE:TIME?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, VNA_HOST_SWEEP_MS);
++  if (usb_ci_prefix(p, ":VNA:SWE:RATE?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR,
++                       VNA_HOST_SWEEP_MS
++                           ? (VNA_HOST_SWEEP_PTS * 1000U) / VNA_HOST_SWEEP_MS
++                           : 0);
++  if (usb_ci_prefix(p, ":VNA:SWE:STAT?"))
++    return plot_printf(resp, max, "%s" VNA_SHELL_NEWLINE_STR,
++                       (sweep_mode & SWEEP_ENABLE) ? "RUN" : "PAUSE");
++
+   if (usb_ci_prefix(p, ":VNA:SWE:START")) {
+-    plot_printf(cmd, sizeof(cmd), "sweep start %u", my_atoui(usb_skip_space(p + 14)));
++    uint32_t value;
++    if (!usb_parse_u32(p + 14, &value))
++      return scpi_error_response(resp, max, -109);
++    plot_printf(cmd, sizeof(cmd), "sweep start %u", value);
+     usb_run_shell(cmd, NULL, 0);
+     return 0;
+   }
+   if (usb_ci_prefix(p, ":VNA:SWE:STOP")) {
+-    plot_printf(cmd, sizeof(cmd), "sweep stop %u", my_atoui(usb_skip_space(p + 13)));
++    uint32_t value;
++    if (!usb_parse_u32(p + 13, &value))
++      return scpi_error_response(resp, max, -109);
++    plot_printf(cmd, sizeof(cmd), "sweep stop %u", value);
++    usb_run_shell(cmd, NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:SWE:CENT")) {
++    uint32_t value;
++    if (!usb_parse_u32(p + 13, &value))
++      return scpi_error_response(resp, max, -109);
++    plot_printf(cmd, sizeof(cmd), "sweep center %u", value);
++    usb_run_shell(cmd, NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:SWE:SPAN")) {
++    uint32_t value;
++    if (!usb_parse_u32(p + 13, &value))
++      return scpi_error_response(resp, max, -109);
++    plot_printf(cmd, sizeof(cmd), "sweep span %u", value);
+     usb_run_shell(cmd, NULL, 0);
+     return 0;
+   }
+   if (usb_ci_prefix(p, ":VNA:SWE:POINTS")) {
+-    plot_printf(cmd, sizeof(cmd), "sweep 0 0 %u", my_atoui(usb_skip_space(p + 15)));
++    uint32_t value;
++    if (!usb_parse_u32(p + 15, &value))
++      return scpi_error_response(resp, max, -109);
++    if (value < SWEEP_POINTS_MIN || value > SWEEP_POINTS_MAX)
++      return scpi_error_response(resp, max, -222);
++    plot_printf(cmd, sizeof(cmd), "sweep 0 0 %u", value);
+     usb_run_shell(cmd, NULL, 0);
+     return 0;
+   }
+@@ -3391,10 +3630,59 @@
+     usb_run_shell(cmd, NULL, 0);
+     return 0;
+   }
++  if (usb_ci_prefix(p, ":VNA:SWE:SINGL")) {
++    pause_sweep();
++    sweep_mode |= SWEEP_ONCE;
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:SWE:CONT")) {
++    usb_run_shell("resume", NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:SWE:PAUS")) {
++    pause_sweep();
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:SWE:RES")) {
++    usb_run_shell("resume", NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:SWE:ABOR")) {
++    pause_sweep();
++    sweep_mode &= ~SWEEP_ONCE;
++    vna_set_avg_restart(true);
++    return 0;
++  }
++
++  /* Trigger model, mapped onto the stock continuous/single sweep machinery. */
++  if (usb_ci_prefix(p, ":VNA:TRIG:MODE?"))
++    return plot_printf(resp, max, "%s" VNA_SHELL_NEWLINE_STR,
++                       (sweep_mode & SWEEP_ENABLE) ? "CONT" : "STOP");
++  if (usb_ci_prefix(p, ":VNA:TRIG:STAT?"))
++    return plot_printf(resp, max, "%s" VNA_SHELL_NEWLINE_STR,
++                       (sweep_mode & SWEEP_ENABLE) ? "RUN" : "IDLE");
++  if (usb_ci_prefix(p, ":VNA:TRIG:MODE")) {
++    char *arg = usb_skip_space(p + 14);
++    if (usb_ci_prefix(arg, "CONT")) {
++      usb_run_shell("resume", NULL, 0);
++    } else if (usb_ci_prefix(arg, "STOP")) {
++      pause_sweep();
++    } else if (usb_ci_prefix(arg, "SINGL")) {
++      pause_sweep();
++      sweep_mode |= SWEEP_ONCE;
++    } else {
++      return scpi_error_response(resp, max, -109);
++    }
++    return 0;
++  }
++
+   if (usb_ci_prefix(p, ":VNA:FREQ?"))
+     return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, get_sweep_frequency(ST_CW));
+   if (usb_ci_prefix(p, ":VNA:FREQ")) {
+-    plot_printf(cmd, sizeof(cmd), "freq %u", my_atoui(usb_skip_space(p + 9)));
++    uint32_t value;
++    if (!usb_parse_u32(p + 9, &value))
++      return scpi_error_response(resp, max, -109);
++    plot_printf(cmd, sizeof(cmd), "freq %u", value);
+     usb_run_shell(cmd, NULL, 0);
+     return 0;
+   }
+@@ -3406,6 +3694,83 @@
+     usb_run_shell("resume", NULL, 0);
+     return 0;
+   }
++  if (usb_ci_prefix(p, ":VNA:ABOR")) {
++    pause_sweep();
++    sweep_mode &= ~SWEEP_ONCE;
++    vna_set_avg_restart(true);
++    return 0;
++  }
++
++  /* Measurement acquisition controls. */
++  if (usb_ci_prefix(p, ":VNA:POW?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, current_props._power);
++  if (usb_ci_prefix(p, ":VNA:POW")) {
++    uint32_t value;
++    if (!usb_parse_u32(p + 8, &value) || value > 3)
++      return scpi_error_response(resp, max, -222);
++    plot_printf(cmd, sizeof(cmd), "power %u", value);
++    usb_run_shell(cmd, NULL, 0);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:BAND?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR,
++                       get_bandwidth_frequency(config._bandwidth));
++  if (usb_ci_prefix(p, ":VNA:BAND")) {
++    uint32_t value;
++    if (!usb_parse_u32(p + 9, &value) || value == 0)
++      return scpi_error_response(resp, max, -222);
++    /* cmd_bandwidth() expects {Hz} {unused} to select by frequency. */
++    plot_printf(cmd, sizeof(cmd), "bandwidth %u 0", value);
++    usb_run_shell(cmd, NULL, 0);
++    return 0;
++  }
++
++  /* Trace averaging, implemented in place over measured[][]. */
++  if (usb_ci_prefix(p, ":VNA:AVER:STAT?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR,
++                       vna_avg_count() > 1 ? 1 : 0);
++  if (usb_ci_prefix(p, ":VNA:AVER:COUN?"))
++    return plot_printf(resp, max, "%u" VNA_SHELL_NEWLINE_STR, vna_avg_count());
++  if (usb_ci_prefix(p, ":VNA:AVER:RES")) {
++    vna_set_avg_restart(true);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:AVER:STAT")) {
++    char *arg = usb_skip_space(p + 14);
++    if (usb_ci_prefix(arg, "ON") || usb_ci_prefix(arg, "1")) {
++      if (vna_avg_count() < 2)
++        vna_set_avg_count(4);
++      vna_set_avg_restart(true);
++    } else if (usb_ci_prefix(arg, "OFF") || usb_ci_prefix(arg, "0")) {
++      vna_set_avg_count(1);
++      vna_set_avg_restart(true);
++    } else {
++      return scpi_error_response(resp, max, -109);
++    }
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:AVER:COUN")) {
++    uint32_t value;
++    if (!usb_parse_u32(p + 14, &value) || value < 1 || value > 255)
++      return scpi_error_response(resp, max, -222);
++    vna_set_avg_count((uint16_t)value);
++    vna_set_avg_restart(true);
++    return 0;
++  }
++  if (usb_ci_prefix(p, ":VNA:AVER")) {
++    char *arg = usb_skip_space(p + 9);
++    if (usb_ci_prefix(arg, "ON") || usb_ci_prefix(arg, "1")) {
++      if (vna_avg_count() < 2)
++        vna_set_avg_count(4);
++      vna_set_avg_restart(true);
++    } else if (usb_ci_prefix(arg, "OFF") || usb_ci_prefix(arg, "0")) {
++      vna_set_avg_count(1);
++      vna_set_avg_restart(true);
++    } else {
++      return scpi_error_response(resp, max, -109);
++    }
++    return 0;
++  }
+ 
+   if (usb_ci_prefix(p, ":VNA:DATA:CHUNK?")) {
+     char *arg = usb_skip_space(p + 16);
+@@ -3422,7 +3787,7 @@
+     return usb_format_data(resp, max, sel, 0, SWEEP_POINTS_MAX);
+   }
+ 
+-  return plot_printf(resp, max, "-113,\"Undefined header\"" VNA_SHELL_NEWLINE_STR);
++  return scpi_error_response(resp, max, -113);
+ }
+ 
+ //
