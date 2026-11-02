@@ -1,0 +1,11 @@
+# NanoVNA-H USB permissions for the unofficial USBFix firmware.
+#
+# The unofficial image is a composite device: CDC ACM for the stock shell plus
+# a USBTMC interface (class 0xFE, subclass 0x03). libusb needs read/write
+# access to the raw USB node to drive USBTMC, so grant it to the active seat
+# user and to the conventional uucp group.
+#
+# Install with: sudo scripts/install-udev.sh
+# Remove with:  sudo scripts/uninstall-udev.sh
+
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="5740", MODE="0660", GROUP="uucp", TAG+="uaccess"

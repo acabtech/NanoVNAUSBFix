@@ -143,17 +143,23 @@ patches/                 pinned upstream patches
   0001-usb-clock-pclk.patch
   0002-usbtmc-scpi.patch
   optional-rtc-default-time.patch
+plans/
+  milestones.md          v0.1.0 baseline and v0.2.0 milestone plan
 scripts/
   build.sh               fetch + patch + build one flavor
   fetch-upstream.sh      unpack the pinned tree for inspection
   verify.sh              artifact size/symbol/hash checks
   flash.sh               dfu-util helper
+  install-udev.sh        grant USBTMC access to the active user
+  uninstall-udev.sh      remove the USBTMC udev rule
+  capture-scpi-baseline.sh  record the read-only SCPI contract
 docs/
   architecture.md        USB clock and composite-device design
   usb-api.md             USBTMC/SCPI command reference
   building.md            toolchain and offline-build notes
   flashing.md            DFU and recovery
   testing.md             CI and hardware smoke tests
+  testing/               recorded baseline transcripts
   experiments/           failed CRS experiment, kept for the record
 .github/workflows/       CI and release automation
 ```

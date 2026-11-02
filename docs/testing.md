@@ -14,6 +14,42 @@
 CI also rebuilds from a clean cache, so a broken patch or a changed upstream
 tarball fails the run.
 
+## Host USB permissions
+
+libusb needs write access to the raw USB device node. Install the rule once:
+
+```bash
+sudo scripts/install-udev.sh
+```
+
+If the instrument is still inaccessible, unplug and replug it. Remove the rule
+with:
+
+```bash
+sudo scripts/uninstall-udev.sh
+```
+
+The rule matches the NanoVNA VID/PID (`0483:5740`) and grants the active seat
+user plus the `uucp` group access. It covers both CDC and USBTMC interfaces, so
+`riglol scpi --usb` and the CDC shell both work without root.
+
+## Release baselines
+
+The v0.1.0 artifacts are the reference point for v0.2.0. Official firmware is
+frozen: it may only change for a confirmed USB bug with a reproduction and a
+regression test. The unofficial image has room to grow for v0.2.0 but must stay
+under the budget enforced by [`scripts/verify.sh`](../scripts/verify.sh:10).
+
+| Flavor | v0.1.0 image size | v0.1.0 `.bin` SHA-256 | Budget |
+| --- | --- | --- | --- |
+| Official (`USB-PCLK`) | 91,704 bytes | `2148dc2638a469a6d9893518f73daca9d8b104c952671611af9f3798efe9dbc2` | 92,160 bytes |
+| Unofficial (`USBTMC`) | 95,432 bytes | `b472d71bf94c1fd49d9f6b8fa5813198d181508cfc03d0ef62c0b740822a5300` | 122,880 bytes |
+
+The v0.1.0 SCPI command contract and the read-only baseline transcript live in
+[`testing/v0.1.0-scpi-baseline.md`](v0.1.0-scpi-baseline.md). Re-record the
+transcript on hardware whenever the USBTMC framing or command surface changes,
+and diff it against the previous release.
+
 ## Hardware smoke test (recommended)
 
 Use a NanoVNA-H with the unofficial image and a host with libusb access.

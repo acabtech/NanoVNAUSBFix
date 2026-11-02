@@ -71,6 +71,23 @@ The interrupt path only frames bytes and queues one command. Command execution
 happens in the sweep thread between sweeps. That keeps VNA state access out of
 interrupt context and lets `:VNA:SWE:EXEC` perform a real measurement.
 
+### Shell output routing
+
+The stock shell writes through one global `shell_stream`. v0.1.0 temporarily
+swapped that pointer while running a `:VNA:CMD?` command and held a mutex across
+the swap. The CDC shell holds that mutex while blocking on input, so a USB shell
+command deadlocked the sweep thread and every later USBTMC request timed out.
+
+The unofficial firmware now routes `shell_printf` by thread: while the sweep
+thread runs a captured command, only that thread writes to the USBTMC response
+stream. CDC echo and output keep using the normal shell stream. No mutex is held
+across the blocking read.
+
+The memory stream must implement both the bulk `write` and single-byte `put`
+hooks: ChibiOS `chvprintf()` emits format output through `streamPut()`.
+v0.1.0 left `put` as a no-op, so even after the deadlock was removed the escape
+hatch returned an empty response.
+
 ### Response storage
 
 The F072 has 16 KiB of RAM and the stock firmware already uses almost all of it.

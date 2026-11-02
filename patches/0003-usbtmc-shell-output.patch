@@ -1,0 +1,104 @@
+--- a/main.c
++++ b/main.c
+@@ -39,7 +39,13 @@
+ 
+ static BaseSequentialStream *shell_stream = 0;
+ threads_queue_t shell_thread;
+-MUTEX_DECL(shell_io_mutex);
++
++/*
++ * USBTMC shell capture. Redirect only the thread that is running the captured
++ * command, so CDC echo and output continue to use shell_stream normally.
++ */
++static thread_t *shell_capture_thread = 0;
++static BaseSequentialStream *shell_capture_stream = 0;
+ 
+ // Shell new line
+ #define VNA_SHELL_NEWLINE_STR    "\r\n"
+@@ -484,11 +490,16 @@
+ // Shell commands output
+ int shell_printf(const char *fmt, ...)
+ {
+-  if (shell_stream == NULL) return 0;
++  BaseSequentialStream *capture = shell_capture_stream;
++  BaseSequentialStream *stream =
++      (capture != NULL && chThdGetSelfX() == shell_capture_thread)
++          ? capture
++          : shell_stream;
++  if (stream == NULL) return 0;
+   va_list ap;
+   int formatted_bytes;
+   va_start(ap, fmt);
+-  formatted_bytes = chvprintf(shell_stream, fmt, ap);
++  formatted_bytes = chvprintf(stream, fmt, ap);
+   va_end(ap);
+   return formatted_bytes;
+ }
+@@ -3213,7 +3224,10 @@
+   return 0;
+ }
+ static msg_t usb_mem_put(void *ip, uint8_t b) {
+-  (void)ip; (void)b;
++  UsbMemStream *s = (UsbMemStream *)ip;
++  /* chvprintf() emits through streamPut(), so the byte path must buffer too. */
++  if (s->buf != NULL && s->len < s->size)
++    s->buf[s->len++] = (char)b;
+   return MSG_OK;
+ }
+ static msg_t usb_mem_get(void *ip) {
+@@ -3228,7 +3242,8 @@
+ static int usb_run_shell(char *line, char *out, int max) {
+   UsbMemStream ms;
+   char *args[VNA_SHELL_MAX_ARGUMENTS + 1];
+-  BaseSequentialStream *saved;
++  BaseSequentialStream *saved_capture = shell_capture_stream;
++  thread_t *saved_thread = shell_capture_thread;
+   int n;
+ 
+   ms.stream.vmt = &usb_mem_vmt;
+@@ -3240,9 +3255,14 @@
+   if (n > (int)ARRAY_COUNT(args))
+     n = ARRAY_COUNT(args);
+ 
+-  chMtxLock(&shell_io_mutex);
+-  saved = shell_stream;
+-  shell_stream = (BaseSequentialStream *)&ms;
++  /*
++   * Do not swap the global shell_stream or take a mutex here. The CDC shell
++   * holds its blocking read for as long as the host keeps the port open, and
++   * waiting on that mutex from the sweep thread deadlocks every later USBTMC
++   * request. Routing by thread keeps the two output paths independent.
++   */
++  shell_capture_thread = chThdGetSelfX();
++  shell_capture_stream = (BaseSequentialStream *)&ms;
+   if (n > 0) {
+     const VNAShellCommand *scp;
+     for (scp = commands; scp->sc_name != NULL; scp++)
+@@ -3253,8 +3273,8 @@
+     else
+       shell_printf("%s?" VNA_SHELL_NEWLINE_STR, args[0]);
+   }
+-  shell_stream = saved;
+-  chMtxUnlock(&shell_io_mutex);
++  shell_capture_stream = saved_capture;
++  shell_capture_thread = saved_thread;
+ 
+   if (out != NULL && ms.len < max)
+     out[ms.len] = 0;
+@@ -3659,16 +3679,13 @@
+       chThdWait(shelltp);
+ #else
+       do {
+-        chMtxLock(&shell_io_mutex);
+         shell_printf(VNA_SHELL_PROMPT_STR);
+         if (VNAShell_readLine(shell_line, VNA_SHELL_MAX_LENGTH))
+           VNAShell_executeLine(shell_line);
+         else {
+-          chMtxUnlock(&shell_io_mutex);
+           chThdSleepMilliseconds(200);
+           continue;
+         }
+-        chMtxUnlock(&shell_io_mutex);
+       } while (shell_check_connect());
+ #endif
+     }

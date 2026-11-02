@@ -10,12 +10,32 @@ Thanks for helping make NanoVNA USB reliable.
   pinned upstream tag.
 - Do not add build outputs, `.bin`/`.hex`/`.elf` files, or the unpacked upstream
   tree to git.
+- Preserve the official image. [`patches/0001-usb-clock-pclk.patch`](patches/0001-usb-clock-pclk.patch)
+  is frozen unless there is a confirmed enumeration/USB bug with a reproduction
+  and a hardware regression test. New features go in the unofficial patch
+  series only.
 - Test both flavors before opening a pull request:
 
 ```bash
 make clean
 make dist
 ```
+
+## Patch series
+
+Patches are cumulative and numbered in application order. Each patch must have
+one purpose and must leave both flavors buildable when applied in sequence.
+
+| Patch | Flavor | Purpose |
+| --- | --- | --- |
+| `0001-usb-clock-pclk.patch` | both | Frozen PCLK USB-clock fix |
+| `0002-usbtmc-scpi.patch` | unofficial | Composite CDC + USBTMC and the SCPI bridge |
+| `0003-usbtmc-shell-output.patch` | unofficial | Per-thread USBTMC shell output and byte-path capture; fixes the `:VNA:CMD?` hang and empty responses |
+
+For v0.2.0 the unofficial series will be split into logical patches as
+milestones land (transport, VNA parity, autoset, calibration, screenshot). Keep
+[`patches/README.md`](patches/README.md) and
+[`docs/architecture.md`](docs/architecture.md) in sync with the series.
 
 ## Adding a patch
 

@@ -2,6 +2,9 @@
 build/
 dist/
 
+# Local operator notes (never commit)
+plans/how-to-get-sudo.md
+
 # Upstream source cache / working trees
 vendor/
 upstream/

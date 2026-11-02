@@ -1,0 +1,44 @@
+# v0.1.0 SCPI baseline
+# selector: usb:0x0483:0x5740
+# date: 2026-11-02T14:52:17Z
+# kernel: Linux 7.2.8-9-omarchy x86_64
+
+$ *IDN?
+NanoVNA-H,USBFix,1.2.50,00000000
+
+$ *OPC?
+1
+
+$ :SYST:ERR?
+0,"No error"
+
+$ :VNA:SWE:START?
+50000
+
+$ :VNA:SWE:STOP?
+900000000
+
+$ :VNA:SWE:POINTS?
+101
+
+$ :VNA:FREQ?
+50000
+
+$ :VNA:DATA:CHUNK? 0,0,3
+50000,-0.913717248,-0.182716640
+9049500,-0.935328768,0.008713582
+18049000,-0.933754496,0.026522948
+
+$ :VNA:DATA:CHUNK? 1,0,3
+50000,0.000033777,-0.000037189
+9049500,0.000062159,-0.000018036
+18049000,0.000055711,-0.000040115
+
+$ :VNA:CMD? info
+Error: USB error: Operation timed out
+[command failed]
+
+$ :VNA:CMD? version
+Error: USB error: Operation timed out
+[command failed]
+

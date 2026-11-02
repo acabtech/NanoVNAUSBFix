@@ -7,9 +7,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 FAIL=0
 
+# Flash budgets. The STM32F072 has 128 KiB of flash. The official image is
+# frozen at the v0.1.0 baseline (91,704 bytes); the 90 KiB ceiling leaves a
+# small toolchain-alignment margin without allowing feature growth. The
+# unofficial image may grow for v0.2.0 but must keep 8 KiB clear of the end of
+# flash for safety.
+OFFICIAL_MAX=92160
+UNOFFICIAL_MAX=122880
+FLASH_MAX=131072
+
 check_variant() {
   local variant="$1"
   local artifact="$2"
+  local max_size="$3"
   local dir="$DIST/$variant"
   local bin="$dir/$artifact.bin"
   local hex="$dir/$artifact.hex"
@@ -26,11 +36,14 @@ check_variant() {
 
   local size
   size=$(stat -c%s "$bin")
-  if (( size > 131072 )); then
+  if (( size > FLASH_MAX )); then
     echo "  $bin is ${size} bytes, larger than the 128 KiB flash" >&2
     FAIL=1
+  elif (( size > max_size )); then
+    echo "  $bin is ${size} bytes, over the ${max_size}-byte budget for $variant" >&2
+    FAIL=1
   else
-    echo "  image size: ${size} bytes"
+    echo "  image size: ${size} bytes (budget ${max_size})"
   fi
 
   (cd "$dir" && sha256sum -c SHA256SUMS >/dev/null) || {
@@ -39,8 +52,8 @@ check_variant() {
   }
 }
 
-check_variant official NanoVNA-H-1.2.50-USB-PCLK
-check_variant unofficial NanoVNA-H-1.2.50-USBTMC
+check_variant official NanoVNA-H-1.2.50-USB-PCLK "$OFFICIAL_MAX"
+check_variant unofficial NanoVNA-H-1.2.50-USBTMC "$UNOFFICIAL_MAX"
 
 unofficial_elf="$DIST/unofficial/NanoVNA-H-1.2.50-USBTMC.elf"
 official_elf="$DIST/official/NanoVNA-H-1.2.50-USB-PCLK.elf"

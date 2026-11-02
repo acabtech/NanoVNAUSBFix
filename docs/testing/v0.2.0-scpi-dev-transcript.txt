@@ -1,0 +1,49 @@
+# v0.2.0-dev SCPI baseline
+# selector: usb:0x0483:0x5740
+# date: 2026-11-02T15:15:54Z
+# kernel: Linux 7.2.8-9-omarchy x86_64
+
+$ *IDN?
+NanoVNA-H,USBFix,1.2.50,00000000
+
+$ *OPC?
+1
+
+$ :SYST:ERR?
+0,"No error"
+
+$ :VNA:SWE:START?
+50000
+
+$ :VNA:SWE:STOP?
+900000000
+
+$ :VNA:SWE:POINTS?
+101
+
+$ :VNA:FREQ?
+50000
+
+$ :VNA:DATA:CHUNK? 0,0,3
+50000,-0.913507072,-0.182857904
+9049500,-0.935184576,0.008442810
+18049000,-0.933757632,0.026358094
+
+$ :VNA:DATA:CHUNK? 1,0,3
+50000,0.000045173,-0.000030395
+9049500,0.000038726,-0.000043009
+18049000,0.000046155,-0.000050892
+
+$ :VNA:CMD? info
+Board: NanoVNA-H
+2019-2026 Copyright NanoVNA.com
+based on  @DiSlord @edy555 ... source
+Licensed under GPL.
+Version: 1.2.50 [p:101, IF:12k, ADC:192k, Lcd:320x240]
+Build Time: Nov  2 2026 - 22:13:49
+Architecture: ARMv6-M Core Variant: Cortex-M0
+Platform: STM32F072xB Entry Level Medium Density devices
+
+$ :VNA:CMD? version
+1.2.50
+
