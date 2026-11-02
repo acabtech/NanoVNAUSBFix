@@ -54,7 +54,7 @@ The M1/M2 command shapes added by
 [`0004-scpi-foundation-sweep-parity.patch`](../patches/0004-scpi-foundation-sweep-parity.patch)
 are recorded in
 [`testing/v0.2.0-scpi-foundation-contract.md`](v0.2.0-scpi-foundation-contract.md).
-That build is 97,904 bytes, still inside the 122,880-byte unofficial budget.
+That build is 97,912 bytes, still inside the 122,880-byte unofficial budget.
 The contract is firmware-build verified; run it on hardware to confirm the
 per-unit UID and sweep timing fields.
 

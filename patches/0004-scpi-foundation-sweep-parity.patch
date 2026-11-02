@@ -129,7 +129,7 @@
  }
  
  #ifdef ENABLED_DUMP_COMMAND
-@@ -3316,6 +3375,112 @@
+@@ -3316,6 +3375,113 @@
  }
  
  /*
@@ -140,6 +140,7 @@
 +
 +static const char *scpi_error_text(int16_t code) {
 +  switch (code) {
++    case 0:    return "No error";
 +    case -113: return "Undefined header";
 +    case -109: return "Missing parameter";
 +    case -222: return "Data out of range";
@@ -242,7 +243,7 @@
   * The SCPI-style command surface implemented by the unofficial firmware.
   * Anything not covered here is still reachable through :VNA:CMD / :VNA:CMD?.
   */
-@@ -3333,22 +3498,54 @@
+@@ -3333,22 +3499,54 @@
                       end[-1] == ' ' || end[-1] == '\t')) *--end = 0;
    if (*p == 0) return 0;
  
@@ -305,7 +306,7 @@
      strncpy(cmd, arg, sizeof(cmd) - 1);
      cmd[sizeof(cmd) - 1] = 0;
      return usb_run_shell(cmd, resp, max);
-@@ -3356,32 +3553,74 @@
+@@ -3356,32 +3554,74 @@
    if (usb_ci_prefix(p, ":VNA:CMD")) {
      char *arg = usb_skip_space(p + 8);
      if (*arg == 0)
@@ -385,7 +386,7 @@
      usb_run_shell(cmd, NULL, 0);
      return 0;
    }
-@@ -3391,10 +3630,59 @@
+@@ -3391,10 +3631,59 @@
      usb_run_shell(cmd, NULL, 0);
      return 0;
    }
@@ -446,7 +447,7 @@
      usb_run_shell(cmd, NULL, 0);
      return 0;
    }
-@@ -3406,6 +3694,83 @@
+@@ -3406,6 +3695,83 @@
      usb_run_shell("resume", NULL, 0);
      return 0;
    }
@@ -530,7 +531,7 @@
  
    if (usb_ci_prefix(p, ":VNA:DATA:CHUNK?")) {
      char *arg = usb_skip_space(p + 16);
-@@ -3422,7 +3787,7 @@
+@@ -3422,7 +3788,7 @@
      return usb_format_data(resp, max, sel, 0, SWEEP_POINTS_MAX);
    }
  
