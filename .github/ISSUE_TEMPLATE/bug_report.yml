@@ -12,7 +12,7 @@ body:
     attributes:
       label: Firmware asset
       description: Exact release asset name and SHA-256 line, if available.
-      placeholder: NanoVNA-H-1.2.50-USB-PCLK.bin
+      placeholder: NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin
     validations:
       required: true
   - type: dropdown

@@ -209,11 +209,14 @@ binary data transfer.
 
 ### Data transfer
 
-- [ ] Add binary full-sweep transfer with an IEEE-488.2 block.
-- [ ] Add a waveform-style preamble query: points, start, step, format, units.
-- [ ] Keep `:VNA:DATA:CHUNK?` for compatibility and make it binary-capable.
+- [x] Add binary full-sweep transfer with an IEEE-488.2 block
+      (`:VNA:DATA:BLOCK?`; patch `0005-m2-binary-data-transfer.patch`).
+- [x] Add a waveform-style preamble query: points, start, step, format, units
+      (`:VNA:DATA:PRE?`).
+- [x] Keep `:VNA:DATA:CHUNK?` for compatibility and make it binary-capable
+      (fourth `BIN`/`BLOCK` argument).
 - [ ] Add per-point calibration-applied vs raw data selection.
-- [ ] Document the exact byte layout and endianness in
+- [x] Document the exact byte layout and endianness in
       [`docs/usb-api.md`](../docs/usb-api.md:59).
 
 **Exit criteria:** Every command group in the DS1000Z reference table has a

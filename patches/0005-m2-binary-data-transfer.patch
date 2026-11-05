@@ -1,0 +1,153 @@
+# NanoVNA-USBFix — M2 binary measurement data transfer
+# Authors: acabtech and @brrrassica
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Applies on top of 0004-scpi-foundation-sweep-parity.patch with patch -p1.
+#
+# Adds IEEE-488.2 definite-length block reads of the measured sweep, a
+# waveform-style preamble query and the project release identity in *IDN?.
+# The unofficial flavor switches to -Os because the 96 KiB code region has no
+# room for new code at -O2.
+
+--- a/main.c
++++ b/main.c
+@@ -3375,6 +3375,68 @@
+ }
+ 
+ /*
++ * M2 binary data transfer.
++ *
++ * The payload is an IEEE-488.2 definite-length block: '#', one digit holding
++ * the number of decimal length digits, the decimal payload length, then the
++ * points. Every point is 12 bytes, little-endian (the Cortex-M0 is
++ * little-endian only):
++ *
++ *   offset 0  uint32  frequency in Hz
++ *   offset 4  float32 real part (raw, calibration-applied)
++ *   offset 8  float32 imaginary part
++ *
++ * 101 points cost 1,212 bytes, well below the 4,084-byte response window.
++ */
++#define VNA_DATA_POINT_BYTES 12
++#define VNA_DATA_BLOCK_MAX_HEADER 8
++
++int vna_usb_data_block(char *resp, int max, int sel, int start, int count) {
++  if (sel < 0 || sel > 1) sel = 0;
++  if (start < 0) start = 0;
++  if (start >= sweep_points) return 0;
++  if (count < 0 || start + count > sweep_points) count = sweep_points - start;
++
++  int max_points = (max - VNA_DATA_BLOCK_MAX_HEADER) / VNA_DATA_POINT_BYTES;
++  if (max_points <= 0) return 0;
++  if (count > max_points) count = max_points;
++
++  int payload = count * VNA_DATA_POINT_BYTES;
++  int digits = 1;
++  for (int v = payload; v >= 10; v /= 10) digits++;
++  int header = 2 + digits;
++
++  uint8_t *out = (uint8_t *)resp;
++  out[0] = '#';
++  out[1] = (uint8_t)('0' + digits);
++  int v = payload;
++  for (int i = digits - 1; i >= 0; i--) {
++    out[2 + i] = (uint8_t)('0' + (v % 10));
++    v /= 10;
++  }
++
++  uint8_t *dst = out + header;
++  for (int i = start; i < start + count; i++) {
++    uint32_t freq = (uint32_t)getFrequency(i);
++    float re = measured[sel][i][0];
++    float im = measured[sel][i][1];
++    memcpy(dst, &freq, sizeof(freq)); dst += sizeof(freq);
++    memcpy(dst, &re, sizeof(re));     dst += sizeof(re);
++    memcpy(dst, &im, sizeof(im));     dst += sizeof(im);
++  }
++  return header + payload;
++}
++
++/* Waveform-style preamble: points,start_hz,step_hz,format,bytes_per_point. */
++static int usb_format_data_preamble(char *resp, int max) {
++  return plot_printf(resp, max, "%u,%u,%u,RI32,%u" VNA_SHELL_NEWLINE_STR,
++                     (unsigned)sweep_points,
++                     (unsigned)getFrequency(0),
++                     (unsigned)getFrequencyStep(),
++                     (unsigned)VNA_DATA_POINT_BYTES);
++}
++
++/*
+  * Minimal SCPI error queue. The queue is packed into two reserved property
+  * words so it adds no BSS: eight 4-bit codes, oldest at the head.
+  */
+@@ -3481,6 +3543,10 @@
+   return true;
+ }
+ 
++/* Release identity reported by *IDN?. It is independent of VERSION above,
++   which stays pinned to the upstream firmware version shown in the menu. */
++#define USBFIX_RELEASE "1.3.0-omariglol"
++
+ /*
+  * The SCPI-style command surface implemented by the unofficial firmware.
+  * Anything not covered here is still reachable through :VNA:CMD / :VNA:CMD?.
+@@ -3502,7 +3568,7 @@
+   if (usb_ci_prefix(p, "*IDN?")) {
+     char serial[32];
+     usb_format_uid(serial, sizeof(serial));
+-    return plot_printf(resp, max, "NanoVNA-H,USBFix," VERSION ",%s"
++    return plot_printf(resp, max, "NanoVNA-H,USBFix," USBFIX_RELEASE ",%s"
+                        VNA_SHELL_NEWLINE_STR, serial);
+   }
+   if (usb_ci_prefix(p, "*OPC?")) {
+@@ -3773,13 +3839,35 @@
+     return 0;
+   }
+ 
+-  if (usb_ci_prefix(p, ":VNA:DATA:CHUNK?")) {
++  if (usb_ci_prefix(p, ":VNA:DATA:PRE?")) {
++    return usb_format_data_preamble(resp, max);
++  }
++  if (usb_ci_prefix(p, ":VNA:DATA:BLOCK?")) {
+     char *arg = usb_skip_space(p + 16);
+     int sel = my_atoui(arg);
+     char *comma = strchr(arg, ',');
+     int start = comma ? my_atoui(comma + 1) : 0;
+     comma = comma ? strchr(comma + 1, ',') : NULL;
+-    int count = comma ? my_atoui(comma + 1) : 32;
++    int count = comma ? my_atoui(comma + 1) : SWEEP_POINTS_MAX;
++    return vna_usb_data_block(resp, max, sel, start, count);
++  }
++  if (usb_ci_prefix(p, ":VNA:DATA:CHUNK?")) {
++    char *arg = usb_skip_space(p + 16);
++    int sel = my_atoui(arg);
++    char *comma = strchr(arg, ',');
++    int start = comma ? my_atoui(comma + 1) : 0;
++    char *fmt = NULL;
++    int count = 32;
++    if (comma) {
++      comma = strchr(comma + 1, ',');
++      if (comma) {
++        count = my_atoui(comma + 1);
++        comma = strchr(comma + 1, ',');
++        if (comma) fmt = usb_skip_space(comma + 1);
++      }
++    }
++    if (fmt && (usb_ci_prefix(fmt, "BIN") || usb_ci_prefix(fmt, "BLOCK")))
++      return vna_usb_data_block(resp, max, sel, start, count);
+     return usb_format_data(resp, max, sel, start, count);
+   }
+   if (usb_ci_prefix(p, ":VNA:DATA?")) {
+--- a/Makefile
++++ b/Makefile
+@@ -21,6 +21,10 @@
+ # Unofficial build: expose the VNA over USBTMC.
+ ifeq ($(USBTMC),yes)
+ USE_OPT += -DNANOVNA_USBTMC
++# The F072 code region is 96 KiB and the -O2 image leaves under 400 bytes free,
++# so the host-facing feature set is built with -Os. The official flavor keeps
++# -O2 and is unaffected.
++USE_OPT += -Os
+ endif
+ 
+ # additional options, use math optimisations

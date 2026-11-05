@@ -26,7 +26,7 @@ USBTMC interface class (`0xFE`/`0x03`), not by a different product ID.
 
 | Command | Response | Notes |
 | --- | --- | --- |
-| `*IDN?` | `NanoVNA-H,USBFix,1.2.50,<24 hex UID>` | SCPI identification; serial comes from the MCU UID |
+| `*IDN?` | `NanoVNA-H,USBFix,1.3.0-omariglol,<24 hex UID>` | SCPI identification; serial comes from the MCU UID |
 | `*OPC?` | `1` | commands run in the sweep thread between sweeps, so the previous measurement is complete when this executes |
 | `*CLS` | — | clears the SCPI error queue |
 | `*RST` | — | clears the error queue, disables averaging and resumes continuous sweep |
@@ -106,7 +106,43 @@ enabling averaging, changing the depth, or `:VNA:AVER:RES` starts fresh.
 | Command | Response | Notes |
 | --- | --- | --- |
 | `:VNA:DATA? [ch]` | lines of `freq,re,im` | first chunk that fits; `ch` is 0 (S11) or 1 (S21) |
-| `:VNA:DATA:CHUNK? <ch>,<start>,<count>` | lines of `freq,re,im` | windowed read; use this for full sweeps |
+| `:VNA:DATA:CHUNK? <ch>,<start>,<count>[,BIN]` | lines of `freq,re,im`, or an IEEE-488.2 block with `BIN`/`BLOCK` | windowed read |
+| `:VNA:DATA:BLOCK? [ch[,start[,count]]]` | IEEE-488.2 definite-length block | binary read; defaults to the whole sweep |
+| `:VNA:DATA:PRE?` | `points,start_hz,step_hz,RI32,12` | waveform-style preamble for a binary read |
+
+### Binary block layout
+
+`:VNA:DATA:BLOCK?` and `:VNA:DATA:CHUNK? ... ,BIN` return a single USBTMC
+response shaped as an IEEE-488.2 definite-length block:
+
+```text
+# <n> <length> <payload>
+```
+
+`<n>` is one decimal digit holding the number of digits in `<length>`, and
+`<length>` is the decimal payload size in bytes. A 101-point payload of 1,212
+bytes is therefore prefixed with `#41212`. Example — read a full S11 sweep in
+one transfer (the bytes after the block header are binary):
+
+```text
+:VNA:DATA:PRE?            -> 101,1000000,290000,RI32,12
+:VNA:DATA:BLOCK? 0        -> #41212<1212 bytes>
+```
+
+Every point is 12 bytes, little-endian (the Cortex-M0 is little-endian only):
+
+| Offset | Type | Meaning |
+| --- | --- | --- |
+| 0 | `uint32` | frequency in Hz |
+| 4 | `float32` | real part (S11 or S21, calibration applied) |
+| 8 | `float32` | imaginary part |
+
+The firmware clamps a binary read to the points that fit in the 4,084-byte
+response window and reports the truncation through the block length, so a host
+must reassemble large requests with `start`/`count` windows. The payload is not
+newline- or NUL-terminated; rely on the block length only.
+
+ASCII reads are unchanged and remain the compatibility path:
 
 Example — read the first 16 S11 points:
 

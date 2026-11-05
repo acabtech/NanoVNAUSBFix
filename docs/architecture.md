@@ -97,6 +97,25 @@ LCD scratch buffer. Drawing is paused while a response is pending
 The result is zero static RAM growth for the response path; the trade-off is
 that a host which stops reading can briefly freeze the display.
 
+### Binary measurement transfer
+
+`vna_usb_data_block()` encodes a window of `measured[][]` straight into the
+response buffer as an IEEE-488.2 definite-length block. Each point is 12 bytes
+(`uint32` Hz, `float32` re, `float32` im) so a 101-point sweep is 1,212 bytes
+plus a six-byte `#`/length header, which fits in one bulk-IN transfer. No second
+sweep buffer is allocated; the encoder reads the existing measurement arrays.
+
+### Flash budget and optimisation level
+
+The NanoVNA-H linker script gives the application only the first **96 KiB** of
+the F072's 128 KiB flash; the last 32 KiB (`flash7`) is reserved for
+configuration storage. At `-O2` the unofficial image was 97,910 of 98,304 bytes,
+i.e. 394 bytes free, which is not enough for further milestones. The unofficial
+flavor therefore builds with `-Os` (added in `0005-m2-binary-data-transfer.patch`,
+gated on `USBTMC=yes`) and leaves about 5 KiB free. The official flavor keeps
+`-O2` and its frozen size. Sweep timing should be re-measured on hardware with
+`:VNA:SWE:TIME?` and `:VNA:SWE:RATE?` before release.
+
 ### SCPI state without extra BSS
 
 The v0.1.0 link leaves no free BSS: `_bss_end` is already at the end of RAM, so

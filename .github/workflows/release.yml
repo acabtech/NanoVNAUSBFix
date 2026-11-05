@@ -37,12 +37,12 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            dist/official/NanoVNA-H-1.2.50-USB-PCLK.bin
-            dist/official/NanoVNA-H-1.2.50-USB-PCLK.hex
-            dist/official/NanoVNA-H-1.2.50-USB-PCLK.elf
-            dist/official/NanoVNA-H-1.2.50-USB-PCLK.map
-            dist/unofficial/NanoVNA-H-1.2.50-USBTMC.bin
-            dist/unofficial/NanoVNA-H-1.2.50-USBTMC.hex
-            dist/unofficial/NanoVNA-H-1.2.50-USBTMC.elf
-            dist/unofficial/NanoVNA-H-1.2.50-USBTMC.map
+            dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin
+            dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.hex
+            dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.elf
+            dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.map
+            dist/unofficial/NanoVNA-H-1.3.0-omariglol.bin
+            dist/unofficial/NanoVNA-H-1.3.0-omariglol.hex
+            dist/unofficial/NanoVNA-H-1.3.0-omariglol.elf
+            dist/unofficial/NanoVNA-H-1.3.0-omariglol.map
             dist/SHA256SUMS

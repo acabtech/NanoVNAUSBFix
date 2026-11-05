@@ -16,8 +16,8 @@ is maintained.
 
 | Release asset | What it is | USB interface |
 | --- | --- | --- |
-| `NanoVNA-H-1.2.50-USB-PCLK.bin` | **Official build.** Stock NanoVNA-H 1.2.50 with the USB peripheral clocked from PCLK instead of HSI48. | CDC ACM serial (`0483:5740`), the normal NanoVNA shell |
-| `NanoVNA-H-1.2.50-USBTMC.bin` | **Unofficial build.** The same PCLK fix plus a composite CDC + USBTMC/SCPI interface. | CDC ACM **and** USBTMC (`0483:5740`, interface class `0xFE`/`0x03`) |
+| `NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin` | **Official build.** Stock NanoVNA-H 1.2.50 with the USB peripheral clocked from PCLK instead of HSI48. | CDC ACM serial (`0483:5740`), the normal NanoVNA shell |
+| `NanoVNA-H-1.3.0-omariglol.bin` | **Unofficial build.** The same PCLK fix plus a composite CDC + USBTMC/SCPI interface. | CDC ACM **and** USBTMC (`0483:5740`, interface class `0xFE`/`0x03`) |
 
 Both images are built from upstream tag [`1.2.50`](https://github.com/hugen79/NanoVNA-H/tree/1.2.50)
 (commit `816495ebc8ca022149787ec2f9e058d6ce3bcb3b`). The only code changes are
@@ -55,7 +55,7 @@ cdc_acm 1-4:1.0: ttyACM0: USB ACM device
 
 ## The unofficial USBTMC/SCPI build
 
-`NanoVNA-H-1.2.50-USBTMC.bin` adds a second USB interface that speaks
+`NanoVNA-H-1.3.0-omariglol.bin` adds a second USB interface that speaks
 **USBTMC** (USB Test & Measurement Class). It is the same transport omariglol
 already implements in `omariglol-core::usb::usbtmc`, so the VNA appears as a
 normal SCPI instrument rather than a serial port.
@@ -67,13 +67,17 @@ the existing workflows keep working. The USBTMC interface is additive.
 # omariglol / riglol, from the omariglol repository
 riglol usb list
 riglol scpi --usb usb:0x0483:0x5740 '*IDN?'
-# NanoVNA-H,USBFix,1.2.50,00000000
+# NanoVNA-H,USBFix,1.3.0-omariglol,000000000000000000000000
 
 riglol scpi --usb usb:0x0483:0x5740 ':VNA:SWE:START 1000000'
 riglol scpi --usb usb:0x0483:0x5740 ':VNA:SWE:STOP 30000000'
 riglol scpi --usb usb:0x0483:0x5740 ':VNA:SWE:POINTS 101'
 riglol scpi --usb usb:0x0483:0x5740 ':VNA:SWE:EXEC'
 riglol scpi --usb usb:0x0483:0x5740 ':VNA:DATA:CHUNK? 0,0,16'
+riglol scpi --usb usb:0x0483:0x5740 ':VNA:DATA:PRE?'
+# 101,1000000,290000,RI32,12
+riglol scpi --usb usb:0x0483:0x5740 ':VNA:DATA:BLOCK? 0'
+# #41212 followed by 101 little-endian 12-byte points
 ```
 
 A generic escape hatch reaches the complete stock command set:
@@ -98,13 +102,13 @@ Put the NanoVNA in DFU mode (`lsusb` shows `0483:df11`), then:
 ```bash
 make official          # or: make unofficial
 sudo dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave \
-  -D dist/official/NanoVNA-H-1.2.50-USB-PCLK.bin
+  -D dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin
 ```
 
 Or use the helper:
 
 ```bash
-./scripts/flash.sh dist/official/NanoVNA-H-1.2.50-USB-PCLK.bin
+./scripts/flash.sh dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin
 ```
 
 Recovery is the same as stock: re-enter DFU (CONFIG → DFU, or short BOOT0 to

@@ -43,7 +43,12 @@ under the budget enforced by [`scripts/verify.sh`](../scripts/verify.sh:10).
 | Flavor | v0.1.0 image size | v0.1.0 `.bin` SHA-256 | Budget |
 | --- | --- | --- | --- |
 | Official (`USB-PCLK`) | 91,704 bytes | `2148dc2638a469a6d9893518f73daca9d8b104c952671611af9f3798efe9dbc2` | 92,160 bytes |
-| Unofficial (`USBTMC`) | 95,432 bytes | `b472d71bf94c1fd49d9f6b8fa5813198d181508cfc03d0ef62c0b740822a5300` | 122,880 bytes |
+| Unofficial (`USBTMC`) | 95,432 bytes | `b472d71bf94c1fd49d9f6b8fa5813198d181508cfc03d0ef62c0b740822a5300` | 96,256 bytes |
+
+The budget follows the hardware, not the 128 KiB flash: the NanoVNA-H linker
+script maps only the first 96 KiB to `flash0`, so anything above 98,304 bytes
+cannot link. The unofficial flavor builds with `-Os` from v0.2.0 onward; the
+current image is 93,176 bytes.
 
 The v0.1.0 SCPI command contract and the read-only baseline transcript live in
 [`testing/v0.1.0-scpi-baseline.md`](v0.1.0-scpi-baseline.md). Re-record the
@@ -54,7 +59,7 @@ The M1/M2 command shapes added by
 [`0004-scpi-foundation-sweep-parity.patch`](../patches/0004-scpi-foundation-sweep-parity.patch)
 are recorded in
 [`testing/v0.2.0-scpi-foundation-contract.md`](v0.2.0-scpi-foundation-contract.md).
-That build is 97,912 bytes, still inside the 122,880-byte unofficial budget.
+That build is 93,176 bytes with `-Os`, inside the 96,256-byte unofficial budget.
 The contract is firmware-build verified; run it on hardware to confirm the
 per-unit UID and sweep timing fields.
 
@@ -85,10 +90,17 @@ riglol scpi --usb usb:0x0483:0x5740 ':VNA:SWE:STOP 30000000'
 riglol scpi --usb usb:0x0483:0x5740 ':VNA:SWE:POINTS 101'
 riglol scpi --usb usb:0x0483:0x5740 ':VNA:SWE:EXEC'
 riglol scpi --usb usb:0x0483:0x5740 ':VNA:DATA:CHUNK? 0,0,4'
+riglol scpi --usb usb:0x0483:0x5740 ':VNA:DATA:PRE?'
+riglol scpi --usb usb:0x0483:0x5740 ':VNA:DATA:BLOCK? 0'
 ```
 
 The data should change when you attach a known load (50 Ω, open, short) to the
 port, and `:VNA:DATA:CHUNK? 1,...` should show S21.
+
+`:VNA:DATA:PRE?` must answer `101,<start>,<step>,RI32,12` and
+`:VNA:DATA:BLOCK? 0` must start with `#41212` followed by 1,212 binary bytes.
+Run the binary read twice on a static load and confirm the payload is identical;
+this is the check that the block length and the byte order are stable.
 
 ### 4. CDC regression
 

@@ -9,6 +9,31 @@ independent (for example `v0.1.0` packaging upstream `1.2.50`).
 The v0.2.0 milestone plan is in [`plans/milestones.md`](plans/milestones.md).
 Work in progress; entries are added as milestones land.
 
+### Added
+
+- Binary measurement transfer (M2, `0005-m2-binary-data-transfer.patch`):
+  `:VNA:DATA:BLOCK?` returns a full or windowed sweep as an IEEE-488.2
+  definite-length block of 12-byte points (`uint32` Hz, `float32` re, `float32`
+  im, little-endian), and `:VNA:DATA:CHUNK?` accepts a trailing `BIN`/`BLOCK`
+  argument. A 101-point sweep is one 1,218-byte response.
+- `:VNA:DATA:PRE?` returns a waveform-style preamble
+  (`points,start_hz,step_hz,RI32,12`).
+- The unofficial flavor now builds with `-Os`. The F072 code region is 96 KiB
+  and the `-O2` image had 394 bytes free, so further milestones could not link.
+  Image size is 93,176 bytes, leaving about 5 KiB for M3/M5. The official
+  `-USB-PCLK` image is unchanged in size (91,704 bytes) and still builds at
+  `-O2`.
+
+### Changed
+
+- Release assets are now versioned with the project identity rather than the
+  pinned upstream version: `NanoVNA-H-1.3.0-omariglol-USB-PCLK.*` (previously
+  `NanoVNA-H-1.2.50-USB-PCLK.*`) and `NanoVNA-H-1.3.0-omariglol.*` (previously
+  `NanoVNA-H-1.2.50-USBTMC.*`). `scripts/build.sh` keeps the pinned upstream
+  tarball version (`1.2.50`) separate from `PROJECT_VERSION`
+  (`1.3.0-omariglol`), so patching and verification are unchanged.
+- `*IDN?` reports `NanoVNA-H,USBFix,1.3.0-omariglol,<UID>`.
+
 ### Fixed
 
 - `:VNA:CMD?` no longer deadlocks the USBTMC stack. The shell output path is

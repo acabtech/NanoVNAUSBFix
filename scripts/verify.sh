@@ -7,14 +7,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 FAIL=0
 
-# Flash budgets. The STM32F072 has 128 KiB of flash. The official image is
-# frozen at the v0.1.0 baseline (91,704 bytes); the 90 KiB ceiling leaves a
-# small toolchain-alignment margin without allowing feature growth. The
-# unofficial image may grow for v0.2.0 but must keep 8 KiB clear of the end of
-# flash for safety.
+# Flash budgets. The STM32F072 has 128 KiB of flash, but the NanoVNA-H linker
+# script gives the application only the first 96 KiB (flash0); the last 32 KiB
+# (flash7) is reserved for configuration storage. The official image is frozen
+# at the v0.1.0 baseline (91,704 bytes, -O2). The unofficial image is built with
+# -Os and must keep 2 KiB clear of the code region for safety.
 OFFICIAL_MAX=92160
-UNOFFICIAL_MAX=122880
-FLASH_MAX=131072
+UNOFFICIAL_MAX=96256
+FLASH_MAX=98304
 
 check_variant() {
   local variant="$1"
@@ -52,14 +52,15 @@ check_variant() {
   }
 }
 
-check_variant official NanoVNA-H-1.2.50-USB-PCLK "$OFFICIAL_MAX"
-check_variant unofficial NanoVNA-H-1.2.50-USBTMC "$UNOFFICIAL_MAX"
+check_variant official NanoVNA-H-1.3.0-omariglol-USB-PCLK "$OFFICIAL_MAX"
+check_variant unofficial NanoVNA-H-1.3.0-omariglol "$UNOFFICIAL_MAX"
 
-unofficial_elf="$DIST/unofficial/NanoVNA-H-1.2.50-USBTMC.elf"
-official_elf="$DIST/official/NanoVNA-H-1.2.50-USB-PCLK.elf"
+unofficial_elf="$DIST/unofficial/NanoVNA-H-1.3.0-omariglol.elf"
+official_elf="$DIST/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.elf"
 
 if [[ -s "$unofficial_elf" ]]; then
-  for symbol in usbtmc_process usbtmc_configure vna_usb_scpi_exec; do
+  for symbol in usbtmc_process usbtmc_configure vna_usb_scpi_exec \
+                vna_usb_data_block; do
     if ! arm-none-eabi-nm "$unofficial_elf" | grep -q " $symbol$"; then
       echo "  unofficial ELF is missing symbol $symbol" >&2
       FAIL=1
