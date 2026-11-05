@@ -13,14 +13,31 @@ jobs:
   build:
     name: Build firmware flavors
     runs-on: ubuntu-24.04
+    # The size budgets in scripts/verify.sh are tied to a specific compiler.
+    # Run in Arch so CI links with the same arm-none-eabi-gcc 16.2.0 that
+    # produced the documented baseline, instead of Ubuntu's 13.2.1 (which
+    # produces a 94,208-byte official image and fails the 92,160-byte budget).
+    container:
+      image: archlinux:base-devel
     steps:
+      # archlinux:base-devel does not ship git, and actions/checkout needs it.
+      # Cache the base package files so the pre-checkout upgrade is offline on
+      # later runs. The key rolls over weekly: a mutable key would never save
+      # packages fetched after a base-image update, causing repeated downloads.
+      - name: Compute weekly cache key
+        id: cache-epoch
+        run: echo "week=$(date +%Y-%W)" >> "$GITHUB_OUTPUT"
+      - name: Restore base package cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/pacman/pkg
+          key: archlinux-base-devel-pacman-${{ steps.cache-epoch.outputs.week }}
+          restore-keys: archlinux-base-devel-pacman-
+      - name: Install git for checkout
+        run: pacman -Syu --noconfirm --needed git
       - uses: actions/checkout@v4
-      - name: Install toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi \
-            p7zip-full make curl patch
+      - name: Install pinned toolchain
+        uses: ./.github/actions/setup-toolchain
       - name: Build and verify
         run: make dist
       - name: Upload artifacts

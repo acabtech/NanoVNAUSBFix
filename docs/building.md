@@ -74,3 +74,23 @@ it to the `PATCHES` array in `scripts/build.sh` if you want it.
 `.github/workflows/ci.yml` builds both flavors on every push and pull request.
 `.github/workflows/release.yml` builds them on a `v*` tag and publishes the
 artifacts with `SHA256SUMS`.
+
+Both workflows run inside an `archlinux:base-devel` container and install the
+toolchain from [`scripts/ci-install-toolchain.sh`](../scripts/ci-install-toolchain.sh).
+The cross-compiler versions are pinned there (GCC 16.2.0, binutils 2.47,
+newlib 4.6.0.20260123) and checked against pinned SHA-256 digests, because the
+flash budgets in [`scripts/verify.sh`](../scripts/verify.sh:15) depend on the
+compiler. Ubuntu's `gcc-arm-none-eabi` 13.2.1 links a 94,208-byte official
+image, over the 92,160-byte budget; the pinned 16.2.0 toolchain produces the
+91,704-byte baseline.
+
+The pinned packages are downloaded from Arch's versioned package mirror (with
+the Arch Linux Archive as a fallback for versions the mirror has dropped) and
+cached in `build/pacman-cache`. The upstream tarball is cached in
+`build/cache`. Both use `actions/cache` in
+[`.github/actions/setup-toolchain/action.yml`](../.github/actions/setup-toolchain/action.yml),
+so a cache hit performs no network download. The container's own
+`/var/cache/pacman/pkg` is cached separately so the pre-checkout `git` install
+is also offline. Bump the versions and the toolchain cache key together. The
+`archlinux-base-devel-pacman-*` key rolls over weekly, so packages pulled after
+a base-image update are saved instead of being downloaded again every run.

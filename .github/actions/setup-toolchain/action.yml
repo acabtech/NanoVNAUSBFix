@@ -1,0 +1,24 @@
+name: Set up pinned ARM toolchain
+description: >
+  Restore the CI caches and install the exact Arch-packaged arm-none-eabi
+  toolchain that the firmware flash budgets were measured against.
+
+runs:
+  using: composite
+  steps:
+    # The pacman package cache makes the pinned cross-toolchain install
+    # offline after the first run. build/cache is the upstream NanoVNA-H
+    # tarball downloaded by scripts/build.sh. The key names every pinned
+    # version plus the upstream tarball SHA-256 from scripts/build.sh, so a
+    # bump invalidates the cache instead of silently reusing stale assets.
+    - name: Restore toolchain and source caches
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/pacman-cache
+          build/cache
+        key: arch-arm-none-eabi-16.2.0-binutils-2.47-newlib-4.6.0.20260123-upstream-3db755b5-v1
+
+    - name: Install pinned toolchain
+      shell: bash
+      run: bash scripts/ci-install-toolchain.sh

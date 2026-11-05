@@ -11,8 +11,10 @@
   `vna_usb_scpi_exec`;
 - the official ELF does **not** contain the USBTMC bridge.
 
-CI also rebuilds from a clean cache, so a broken patch or a changed upstream
-tarball fails the run.
+CI also rebuilds from a clean work tree, so a broken patch or a changed
+upstream tarball fails the run. The build uses the pinned toolchain from
+[`scripts/ci-install-toolchain.sh`](../scripts/ci-install-toolchain.sh); the
+size budgets assume that compiler, not the distro packages.
 
 ## Host USB permissions
 

@@ -17,16 +17,27 @@ jobs:
   release:
     name: Build and publish release
     runs-on: ubuntu-24.04
+    # Build with the same pinned Arch toolchain as CI; see ci.yml.
+    container:
+      image: archlinux:base-devel
     steps:
+      # archlinux:base-devel does not ship git, and actions/checkout needs it.
+      - name: Compute weekly cache key
+        id: cache-epoch
+        run: echo "week=$(date +%Y-%W)" >> "$GITHUB_OUTPUT"
+      - name: Restore base package cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/pacman/pkg
+          key: archlinux-base-devel-pacman-${{ steps.cache-epoch.outputs.week }}
+          restore-keys: archlinux-base-devel-pacman-
+      - name: Install git for checkout
+        run: pacman -Syu --noconfirm --needed git
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi \
-            p7zip-full make curl patch
+      - name: Install pinned toolchain
+        uses: ./.github/actions/setup-toolchain
       - name: Build and verify
         run: make dist
       - name: Publish GitHub release

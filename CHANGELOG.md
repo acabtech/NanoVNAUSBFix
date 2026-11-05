@@ -36,6 +36,11 @@ Work in progress; entries are added as milestones land.
 
 ### Fixed
 
+- CI and release builds now run in an `archlinux:base-devel` container with the
+  pinned GCC 16.2.0 / binutils 2.47 / newlib 4.6.0.20260123 toolchain. Ubuntu's
+  `gcc-arm-none-eabi` 13.2.1 linked a 94,208-byte official image and failed the
+  92,160-byte budget even though the pinned compiler produces the 91,704-byte
+  baseline. The toolchain packages and upstream tarball are cached between runs.
 - `:VNA:CMD?` no longer deadlocks the USBTMC stack. The shell output path is
   routed per-thread instead of swapping the global `shell_stream` while the CDC
   shell holds its mutex across a blocking read. This fixes the v0.1.0 hang where
