@@ -15,19 +15,19 @@
 
 ```bash
 sudo dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave \
-  -D dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin
+  -D dist/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.bin
 ```
 
 or:
 
 ```bash
-./scripts/flash.sh dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin
+./scripts/flash.sh dist/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.bin
 ```
 
 The unofficial image uses the same address:
 
 ```bash
-./scripts/flash.sh dist/unofficial/NanoVNA-H-1.3.0-omariglol.bin
+./scripts/flash.sh dist/unofficial/NanoVNA-H-1.3.1-omariglol.bin
 ```
 
 `dfu-util` reports the transfer and the device leaves DFU into the application.
@@ -51,7 +51,7 @@ lsusb -t
 riglol usb list
 # marks the interface as usbtmc
 riglol scpi --usb usb:0x0483:0x5740 '*IDN?'
-# NanoVNA-H,USBFix,1.3.0-omariglol,000000000000000000000000
+# NanoVNA-H,USBFix,1.3.1-omariglol,000000000000000000000000
 ```
 
 ## Recovery

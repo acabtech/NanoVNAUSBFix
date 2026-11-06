@@ -27,9 +27,9 @@ Options:
   --no-sudo              Run openocd directly instead of through sudo.
   -h, --help             Show this help.
 
-With no firmware.bin, dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin is
+With no firmware.bin, dist/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.bin is
 used. The unofficial image works the same way:
-  scripts/recover-openocd.sh dist/unofficial/NanoVNA-H-1.3.0-omariglol.bin
+  scripts/recover-openocd.sh dist/unofficial/NanoVNA-H-1.3.1-omariglol.bin
 EOF
 }
 

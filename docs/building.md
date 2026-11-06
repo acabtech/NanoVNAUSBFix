@@ -57,8 +57,8 @@ the pinned tree and add it to `patches/`. Do not commit the upstream tree.
 ## Artifact names
 
 ```text
-dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.{bin,hex,elf,map}
-dist/unofficial/NanoVNA-H-1.3.0-omariglol.{bin,hex,elf,map}
+dist/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.{bin,hex,elf,map}
+dist/unofficial/NanoVNA-H-1.3.1-omariglol.{bin,hex,elf,map}
 ```
 
 Both images are for `TARGET=F072` only.

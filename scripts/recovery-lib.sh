@@ -173,10 +173,10 @@ recovery_resolve_image() {
   if [[ -z "$file" ]]; then
     case "$flavor" in
       official)
-        file="$RECOVERY_ROOT/dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin"
+        file="$RECOVERY_ROOT/dist/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.bin"
         ;;
       unofficial)
-        file="$RECOVERY_ROOT/dist/unofficial/NanoVNA-H-1.3.0-omariglol.bin"
+        file="$RECOVERY_ROOT/dist/unofficial/NanoVNA-H-1.3.1-omariglol.bin"
         ;;
       *)
         recovery_die "unknown flavor: $flavor"

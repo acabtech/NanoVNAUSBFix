@@ -30,7 +30,7 @@ The script defaults to the official recovery image:
 To flash the unofficial image:
 
 ```bash
-./scripts/recover-openocd.sh dist/unofficial/NanoVNA-H-1.3.0-omariglol.bin
+./scripts/recover-openocd.sh dist/unofficial/NanoVNA-H-1.3.1-omariglol.bin
 ```
 
 If the application has disabled SWD or the MCU is not stopping, add
@@ -59,7 +59,7 @@ Manual equivalent:
 
 ```bash
 sudo openocd -f interface/stlink.cfg -f target/stm32f0x.cfg \
-  -c "program {dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin} \
+  -c "program {dist/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.bin} \
       0x08000000 verify reset exit"
 ```
 
@@ -68,7 +68,7 @@ STM32CubeProgrammer to remove protection first:
 
 ```bash
 STM32_Programmer_CLI -c port=SWD mode=UR -e all \
-  -w dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin 0x08000000 -v -rst
+  -w dist/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.bin 0x08000000 -v -rst
 ```
 
 After recovery, set BOOT0 back to GND/low and power-cycle.
@@ -93,7 +93,7 @@ parts; verify which pads your board exposes before soldering.
 ./scripts/recover-uart.sh -p /dev/ttyUSB0
 # unofficial image:
 ./scripts/recover-uart.sh -p /dev/ttyUSB0 \
-  dist/unofficial/NanoVNA-H-1.3.0-omariglol.bin
+  dist/unofficial/NanoVNA-H-1.3.1-omariglol.bin
 ```
 
 The script installs `stm32flash` automatically: the repo package on Debian, and
@@ -118,26 +118,29 @@ Both release ELFs are built with `-ggdb` and `-fstack-usage`, so they contain
 debug symbols and per-function static stack estimates.
 
 - Official ELF:
-  `dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.elf`
+  `dist/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.elf`
 - Unofficial ELF:
-  `dist/unofficial/NanoVNA-H-1.3.0-omariglol.elf`
+  `dist/unofficial/NanoVNA-H-1.3.1-omariglol.elf`
 
 ### Runtime stack high-water mark
 
 The unofficial image has a `stack` shell command (patch
 `0006-ram0-stack-command`). Run it after exercising the worst-case paths
-(calibration, SD writes, long shell commands):
+(calibration, SD writes, long shell commands, and `dump`):
 
 ```text
 ch> stack
 thread     size   free   used
-sweep      1192    488    704
-main        512     52    460
+sweep       872    136    736
+main        576    116    460
 ```
 
-Those are measured values from the patched unofficial image. `waThread1` has
-the larger headroom; the 512-byte main/process stack is the tight one and
-deserves attention first.
+These are measured values after RAM-2 (`0009-ram2-stack-sizes`). The `sweep`
+worst case is the `dump` command, whose 408-byte local frame takes the thread
+to 736 bytes including `thread_t`; that leaves 136 bytes of headroom. The
+process stack was raised from 512 to 576 bytes because the boot path uses 460,
+leaving only 52 bytes at the old size. Shell and SCPI commands execute in the
+sweep thread, not on the main process stack.
 
 `free` is the number of untouched bytes at the base of the working area,
 measured from the ChibiOS fill pattern (`0x55`). `used = size - free` includes
@@ -173,7 +176,7 @@ openocd -f interface/stlink.cfg -f target/stm32f0x.cfg
 Terminal 2, load the matching ELF:
 
 ```bash
-arm-none-eabi-gdb dist/unofficial/NanoVNA-H-1.3.0-omariglol.elf
+arm-none-eabi-gdb dist/unofficial/NanoVNA-H-1.3.1-omariglol.elf
 (gdb) target extended-remote :3333
 (gdb) monitor reset halt
 (gdb) break cal_done
@@ -222,7 +225,7 @@ The frame is `R0 R1 R2 R3 R12 LR PC xPSR`; word 6 (`PC`) is the faulting
 instruction. Map it back to source:
 
 ```bash
-arm-none-eabi-addr2line -e dist/unofficial/NanoVNA-H-1.3.0-omariglol.elf \
+arm-none-eabi-addr2line -e dist/unofficial/NanoVNA-H-1.3.1-omariglol.elf \
   -f -C 0x0800b374
 ```
 

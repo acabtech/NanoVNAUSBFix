@@ -50,7 +50,7 @@ under the budget enforced by [`scripts/verify.sh`](../scripts/verify.sh:10).
 The budget follows the hardware, not the 128 KiB flash: the NanoVNA-H linker
 script maps only the first 96 KiB to `flash0`, so anything above 98,304 bytes
 cannot link. The unofficial flavor builds with `-Os` from v0.2.0 onward; the
-current image is 93,176 bytes.
+current image (including RAM-2/RAM-3) is 91,384 bytes.
 
 The v0.1.0 SCPI command contract and the read-only baseline transcript live in
 [`testing/v0.1.0-scpi-baseline.md`](v0.1.0-scpi-baseline.md). Re-record the
@@ -61,7 +61,7 @@ The M1/M2 command shapes added by
 [`0004-scpi-foundation-sweep-parity.patch`](../patches/0004-scpi-foundation-sweep-parity.patch)
 are recorded in
 [`testing/v0.2.0-scpi-foundation-contract.md`](v0.2.0-scpi-foundation-contract.md).
-That build is 93,176 bytes with `-Os`, inside the 96,256-byte unofficial budget.
+That build is 91,384 bytes with `-Os`, inside the 96,256-byte unofficial budget.
 The contract is firmware-build verified; run it on hardware to confirm the
 per-unit UID and sweep timing fields.
 

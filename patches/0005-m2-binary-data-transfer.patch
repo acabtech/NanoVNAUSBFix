@@ -86,7 +86,7 @@
  
 +/* Release identity reported by *IDN?. It is independent of VERSION above,
 +   which stays pinned to the upstream firmware version shown in the menu. */
-+#define USBFIX_RELEASE "1.3.0-omariglol"
++#define USBFIX_RELEASE "1.3.1-omariglol"
 +
  /*
   * The SCPI-style command surface implemented by the unofficial firmware.

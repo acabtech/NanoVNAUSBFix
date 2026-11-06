@@ -17,10 +17,10 @@ UNOFFICIAL_MAX=96256
 FLASH_MAX=98304
 
 # RAM budgets. Warn when free SRAM drops below 1 KiB and fail below 200 bytes.
-# `FF_FS_TINY=1` measured 0 B saved because FatFs is overlaid in spi_buffer, so
-# the unofficial image is still well below the floor. CI sets RAM_ALLOW_LOW=1
-# temporarily, which downgrades the hard failure to a warning; remove that
-# allowance once RAM-2/RAM-6 raise free RAM above the floor.
+# RAM-2/RAM-3 raised the unofficial image from 12 to 316 bytes free, so it now
+# clears the floor. CI still sets RAM_ALLOW_LOW=1 for the frozen official image
+# and as a one-off bench override; remove that allowance after the next official
+# baseline rebuild.
 RAM_WARN_FREE=1024
 RAM_MIN_FREE=200
 RAM_ALLOW_LOW="${RAM_ALLOW_LOW:-0}"
@@ -85,11 +85,11 @@ check_variant() {
   }
 }
 
-check_variant official NanoVNA-H-1.3.0-omariglol-USB-PCLK "$OFFICIAL_MAX"
-check_variant unofficial NanoVNA-H-1.3.0-omariglol "$UNOFFICIAL_MAX"
+check_variant official NanoVNA-H-1.3.1-omariglol-USB-PCLK "$OFFICIAL_MAX"
+check_variant unofficial NanoVNA-H-1.3.1-omariglol "$UNOFFICIAL_MAX"
 
-unofficial_elf="$DIST/unofficial/NanoVNA-H-1.3.0-omariglol.elf"
-official_elf="$DIST/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.elf"
+unofficial_elf="$DIST/unofficial/NanoVNA-H-1.3.1-omariglol.elf"
+official_elf="$DIST/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.elf"
 
 if [[ -s "$unofficial_elf" ]]; then
   for symbol in usbtmc_process usbtmc_configure vna_usb_scpi_exec \

@@ -13,7 +13,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VARIANT="${1:-official}"
 # Project release identity used in artifact filenames. This is independent of
 # UPSTREAM_VERSION, which stays pinned to the tarball we patch.
-PROJECT_VERSION="1.3.0-omariglol"
+PROJECT_VERSION="1.3.1-omariglol"
 UPSTREAM_VERSION="1.2.50"
 UPSTREAM_TAG="1.2.50"
 UPSTREAM_COMMIT="816495ebc8ca022149787ec2f9e058d6ce3bcb3b"
@@ -36,6 +36,8 @@ case "$VARIANT" in
       patches/0006-ram0-stack-command.patch
       patches/0007-ram1-ff-fs-tiny.patch
       patches/0008-fix-spi-buffer-alignment.patch
+      patches/0009-ram2-stack-sizes.patch
+      patches/0010-ram3-measure-memory.patch
     )
     ARTIFACT="NanoVNA-H-${PROJECT_VERSION}"
     MAKE_ARGS=(TARGET=F072 USBTMC=yes)

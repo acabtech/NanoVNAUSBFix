@@ -26,7 +26,7 @@ USBTMC interface class (`0xFE`/`0x03`), not by a different product ID.
 
 | Command | Response | Notes |
 | --- | --- | --- |
-| `*IDN?` | `NanoVNA-H,USBFix,1.3.0-omariglol,<24 hex UID>` | SCPI identification; serial comes from the MCU UID |
+| `*IDN?` | `NanoVNA-H,USBFix,1.3.1-omariglol,<24 hex UID>` | SCPI identification; serial comes from the MCU UID |
 | `*OPC?` | `1` | commands run in the sweep thread between sweeps, so the previous measurement is complete when this executes |
 | `*CLS` | — | clears the SCPI error queue |
 | `*RST` | — | clears the error queue, disables averaging and resumes continuous sweep |

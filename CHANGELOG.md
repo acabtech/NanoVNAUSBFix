@@ -32,24 +32,38 @@ Work in progress; entries are added as milestones land.
   in [`docs/debugging.md`](docs/debugging.md).
 - The unofficial flavor now builds with `-Os`. The F072 code region is 96 KiB
   and the `-O2` image had 394 bytes free, so further milestones could not link.
-  Image size is 93,176 bytes, leaving about 5 KiB for M3/M5. The official
-  `-USB-PCLK` image is unchanged in size (91,704 bytes) and still builds at
-  `-O2`.
+  After RAM-3 the image is 91,384 bytes, leaving about 6.7 KiB for M3/M5. The
+  official `-USB-PCLK` image is unchanged in size (91,704 bytes) and still
+  builds at `-O2`.
 
 ### Changed
 
+- Project identity bumped from `1.3.0-omariglol` to `1.3.1-omariglol` across
+  `PROJECT_VERSION`, `USBFIX_RELEASE`, artifact filenames, scripts, docs and
+  the issue/release templates.
+- RAM-2: the unofficial flavor now uses a 704-byte `waThread1` working area
+  (down from 1024) and a 0x240 process stack (up from 0x200). Measured on
+  hardware: the sweep thread's worst case is 736 bytes including `thread_t`
+  (136 bytes free, after `dump`), and the main boot path uses 460 bytes
+  (116 bytes free). Net saving is 256 bytes; the official flavor stays on the
+  0x200 process stack.
+- RAM-3: the measurement module's `measure_memory` scratch buffer is now
+  80 bytes (down from 128) and 4-byte aligned, with `_Static_assert`s guarding
+  every structure that aliases it. This saves 48 bytes of RAM and 1,812 bytes
+  of flash (GCC emits direct word accesses for the float views). `rx_buffer`
+  is not a serial buffer; it is the 384-byte I2S DMA buffer and is unchanged.
 - RAM-1: the unofficial flavor now builds with `FF_FS_TINY=1`
   (`patches/0007`). It was measured at **0 B** RAM saved, not the estimated
   ~512 B, because `FATFS` and `FIL` are overlaid in the fixed-size
   `spi_buffer`. The setting is retained as a prerequisite for a future
   `SPI_BUFFER_SIZE` reduction.
 - Release assets are now versioned with the project identity rather than the
-  pinned upstream version: `NanoVNA-H-1.3.0-omariglol-USB-PCLK.*` (previously
-  `NanoVNA-H-1.2.50-USB-PCLK.*`) and `NanoVNA-H-1.3.0-omariglol.*` (previously
+  pinned upstream version: `NanoVNA-H-1.3.1-omariglol-USB-PCLK.*` (previously
+  `NanoVNA-H-1.2.50-USB-PCLK.*`) and `NanoVNA-H-1.3.1-omariglol.*` (previously
   `NanoVNA-H-1.2.50-USBTMC.*`). `scripts/build.sh` keeps the pinned upstream
   tarball version (`1.2.50`) separate from `PROJECT_VERSION`
-  (`1.3.0-omariglol`), so patching and verification are unchanged.
-- `*IDN?` reports `NanoVNA-H,USBFix,1.3.0-omariglol,<UID>`.
+  (`1.3.1-omariglol`), so patching and verification are unchanged.
+- `*IDN?` reports `NanoVNA-H,USBFix,1.3.1-omariglol,<UID>`.
 
 ### Fixed
 

@@ -31,7 +31,7 @@ Options:
                          accessible to the current user.
   -h, --help             Show this help.
 
-With no firmware.bin, dist/official/NanoVNA-H-1.3.0-omariglol-USB-PCLK.bin is
+With no firmware.bin, dist/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.bin is
 used. Bootloader wiring is USART1: PA9 (TX) -> adapter RX, PA10 (RX) -> adapter
 TX, 3.3 V logic, common GND. BOOT0 must be high at reset.
 EOF

@@ -1,0 +1,50 @@
+--- a/main.c
++++ b/main.c
+@@ -281,7 +281,11 @@
+ }
+ #endif
+ 
+-static THD_WORKING_AREA(waThread1, 1024);
++// RAM-2: measured worst-case sweep-thread use is ~568 B (including the
++// `dump` command's 408-byte local frame), so 704 B leaves ~136 B headroom
++// while returning 320 B to the general RAM pool. Keep this in sync with the
++// measured values in plans/bss-reduction.md.
++static THD_WORKING_AREA(waThread1, 704);
+ static THD_FUNCTION(Thread1, arg)
+ {
+   (void)arg;
+@@ -4055,9 +4059,11 @@
+ }
+ #endif
+ 
+-// Main thread stack size defined in makefile USE_PROCESS_STACKSIZE = 0x200
+-// Profile stack usage (enable threads command by def ENABLE_THREADS_COMMAND) show:
+-// Stack maximum usage = 472 bytes (need test more and run all commands), free stack = 40 bytes
++// Main thread stack size defined in makefile USE_PROCESS_STACKSIZE:
++// 0x200 for the official flavor, 0x240 for the unofficial (RAM-2) flavor.
++// Measured boot-path high-water on the unofficial image is 460 bytes, so
++// 0x240 (576 bytes) leaves 116 bytes free. Shell and SCPI commands run in the
++// sweep thread, not here.
+ //
+ int main(void)
+ {
+--- a/Makefile
++++ b/Makefile
+@@ -94,8 +94,16 @@
+ 
+ # Stack size to be allocated to the Cortex-M process stack. This stack is
+ # the stack used by the main() thread.
++#
++# The unofficial (USBTMC) flavor raises this from 0x200 to 0x240: the measured
++# boot-path high-water mark is 460 bytes, leaving only 52 bytes at 0x200.
++# Keep the official flavor frozen at 0x200.
+ ifeq ($(USE_PROCESS_STACKSIZE),)
+-  USE_PROCESS_STACKSIZE = 0x200
++  ifeq ($(USBTMC),yes)
++    USE_PROCESS_STACKSIZE = 0x240
++  else
++    USE_PROCESS_STACKSIZE = 0x200
++  endif
+ endif
+ # Stack size to the allocated to the Cortex-M main/exceptions stack. This
+ # stack is used for processing interrupts and exceptions.

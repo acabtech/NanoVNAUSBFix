@@ -1,0 +1,62 @@
+--- a/measure.c
++++ b/measure.c
+@@ -23,8 +23,12 @@
+ #pragma GCC push_options
+ #pragma GCC optimize ("Os")
+ 
+-// Memory for measure cache data
+-static char measure_memory[128];
++// Memory for measure cache data. Every measurement structure below is an
++// alternative view of this buffer; the largest is s21_filter_measure_t at
++// 76 bytes on Cortex-M0. The buffer is 4-byte aligned because those views
++// contain float/int32_t members, and Cortex-M0 faults on unaligned access.
++#define MEASURE_MEMORY_SIZE 80
++static char measure_memory[MEASURE_MEMORY_SIZE] __attribute__((aligned(4)));
+ 
+ // Measure math functions
+ // quadratic function solver
+@@ -216,6 +220,8 @@
+    t_lc_match matches[4];
+    int16_t num_matches;
+ } lc_match_array_t;
++_Static_assert(sizeof(lc_match_array_t) <= MEASURE_MEMORY_SIZE,
++               "measure_memory is too small for lc_match_array_t");
+ 
+ // Size = 60 bytes
+ static lc_match_array_t *lc_match_array = (lc_match_array_t *)measure_memory;
+@@ -381,6 +387,8 @@
+ //  freq_t f2;
+ //  float tan45;
+ } s21_analysis_t;
++_Static_assert(sizeof(s21_analysis_t) <= MEASURE_MEMORY_SIZE,
++               "measure_memory is too small for s21_analysis_t");
+ static s21_analysis_t *s21_measure = (s21_analysis_t *)measure_memory;
+ 
+ static float s21pow2(uint16_t i) {
+@@ -545,6 +553,8 @@
+   float bw_6dB;
+   float  q;
+ } s21_filter_measure_t;
++_Static_assert(sizeof(s21_filter_measure_t) <= MEASURE_MEMORY_SIZE,
++               "measure_memory is too small for s21_filter_measure_t");
+ static s21_filter_measure_t *s21_filter = (s21_filter_measure_t *)measure_memory;
+ 
+ static void draw_s21_pass(int xp, int yp, s21_pass *p, const char *name) {
+@@ -647,6 +657,8 @@
+   float C0;
+   float a, b, c;
+ } s11_cable_measure_t;
++_Static_assert(sizeof(s11_cable_measure_t) <= MEASURE_MEMORY_SIZE,
++               "measure_memory is too small for s11_cable_measure_t");
+ static s11_cable_measure_t *s11_cable = (s11_cable_measure_t *)measure_memory;
+ float real_cable_len = 0.0f;
+ 
+@@ -728,6 +740,8 @@
+   } data[MEASURE_RESONANCE_COUNT];
+   uint8_t count;
+ } s11_resonance_measure_t;
++_Static_assert(sizeof(s11_resonance_measure_t) <= MEASURE_MEMORY_SIZE,
++               "measure_memory is too small for s11_resonance_measure_t");
+ static s11_resonance_measure_t *s11_resonance = (s11_resonance_measure_t *)measure_memory;
+ 
+ 
