@@ -50,7 +50,7 @@ under the budget enforced by [`scripts/verify.sh`](../scripts/verify.sh:10).
 The budget follows the hardware, not the 128 KiB flash: the NanoVNA-H linker
 script maps only the first 96 KiB to `flash0`, so anything above 98,304 bytes
 cannot link. The unofficial flavor builds with `-Os` from v0.2.0 onward; the
-current image (including RAM-2/RAM-3) is 91,384 bytes.
+current image (including RAM-2/RAM-3/RAM-4) is 91,448 bytes.
 
 The v0.1.0 SCPI command contract and the read-only baseline transcript live in
 [`testing/v0.1.0-scpi-baseline.md`](v0.1.0-scpi-baseline.md). Re-record the

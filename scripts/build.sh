@@ -38,6 +38,7 @@ case "$VARIANT" in
       patches/0008-fix-spi-buffer-alignment.patch
       patches/0009-ram2-stack-sizes.patch
       patches/0010-ram3-measure-memory.patch
+      patches/0011-ram4-trace-index.patch
     )
     ARTIFACT="NanoVNA-H-${PROJECT_VERSION}"
     MAKE_ARGS=(TARGET=F072 USBTMC=yes)

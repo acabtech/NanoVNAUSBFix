@@ -1,0 +1,258 @@
+--- a/plot.c
++++ b/plot.c
+@@ -47,14 +47,23 @@
+ // Mark cell to update here
+ static map_t markmap[MAX_MARKMAP_Y];
+ 
+-// Trace data cache, for faster redraw cells
++// Trace data cache, for faster redraw cells.
++// These are display pixel coordinates, not measurement values. x spans the
++// plot area (CELLOFFSETX..CELLOFFSETX+WIDTH) and needs 9 bits, while y is
++// clamped to HEIGHT and fits in 8 bits on the 320x240 panel. Keeping x and y
++// in separate arrays avoids struct padding (3 bytes per point instead of 4).
++// If a future panel makes HEIGHT exceed 255, y widens again automatically so
++// no coordinate is truncated.
+ #define TRACE_INDEX_COUNT (TRACES_MAX+STORED_TRACES)
+ 
+-typedef struct {
+-  uint16_t x;
+-  uint16_t y;
+-} index_t;
+-static index_t trace_index[TRACE_INDEX_COUNT][SWEEP_POINTS_MAX];
++#if HEIGHT > 255
++typedef uint16_t index_y_t;
++#else
++typedef uint8_t index_y_t;
++#endif
++
++static uint16_t  trace_index_x[TRACE_INDEX_COUNT][SWEEP_POINTS_MAX];
++static index_y_t trace_index_y[TRACE_INDEX_COUNT][SWEEP_POINTS_MAX];
+ 
+ #if 1
+ // All used in plot v > 0
+@@ -391,18 +400,22 @@
+     markmap[y1]|= mask;
+ }
+ 
+-static void mark_set_index(index_t *index, uint16_t i, uint16_t x, uint16_t y) {
++static void mark_set_index(int t, uint16_t i, uint16_t x, uint16_t y) {
+   static uint16_t diff;
+-  static index_t last_erase;
++  static uint16_t last_erase_x;
++  static index_y_t last_erase_y;
++  uint16_t  *index_x = trace_index_x[t];
++  index_y_t *index_y = trace_index_y[t];
+   diff = (diff<<1);
+-  if (index[i].x != x || index[i].y != y) diff|= 1;
++  if (index_x[i] != x || index_y[i] != y) diff|= 1;
+   if ((diff & 3) && i > 0) { // one of points for trace line change (only for > 0 index)
+-    mark_line(last_erase.x, last_erase.y, index[i].x, index[i].y); // mark old line for erase
+-    mark_line(index[i-1].x, index[i-1].y, x, y);                   // mark new line for draw
++    mark_line(last_erase_x, last_erase_y, index_x[i], index_y[i]); // mark old line for erase
++    mark_line(index_x[i-1], index_y[i-1], x, y);                   // mark new line for draw
+   }
+-  last_erase = index[i];
+-  index[i].x = x;
+-  index[i].y = y;
++  last_erase_x = index_x[i];
++  last_erase_y = index_y[i];
++  index_x[i] = x;
++  index_y[i] = y;
+ }
+ 
+ static inline void clear_markmap(void) {
+@@ -853,7 +866,8 @@
+   }
+   if (current_trace == TRACE_INVALID) return;
+   stored_traces_points[t] = sweep_points;
+-  memcpy(trace_index[TRACES_MAX + t], trace_index[current_trace], sizeof(trace_index[0]));
++  memcpy(trace_index_x[TRACES_MAX + t], trace_index_x[current_trace], sizeof(trace_index_x[0]));
++  memcpy(trace_index_y[TRACES_MAX + t], trace_index_y[current_trace], sizeof(trace_index_y[0]));
+   enabled_store_trace|= mask;
+ }
+ 
+@@ -870,8 +884,10 @@
+ }
+ 
+ void plot_debug_data(int t, int point, int y) {
+-  trace_index[TRACES_MAX + t][point].x = CELLOFFSETX + (point-1) * WIDTH / (sweep_points-1);
+-  trace_index[TRACES_MAX + t][point].y = y;
++  if (y < 0) y = 0;
++  else if (y > HEIGHT) y = HEIGHT;
++  trace_index_x[TRACES_MAX + t][point] = CELLOFFSETX + (point-1) * WIDTH / (sweep_points-1);
++  trace_index_y[TRACES_MAX + t][point] = y;
+   redraw_request|= REDRAW_AREA;
+ }
+ 
+@@ -885,19 +901,20 @@
+ // Give a little speedup then draw rectangular plot
+ // Write more difficult algorithm for search indexes not give speedup
+ //**************************************************************************************
+-static void search_index_range_x(int x1, int x2, index_t *index, int *i0, int *i1) {
++static void search_index_range_x(int x1, int x2, int t, int *i0, int *i1) {
++  const uint16_t *index = trace_index_x[t];
+   int lo = *i0, hi = *i1, mid;
+-  do { // search first index[hi].x >= x2
++  do { // search first index[hi] >= x2
+     mid = (lo + hi) >> 1;
+-    if (index[mid].x >= x2) hi = mid;
+-    else                    lo = mid;
++    if (index[mid] >= x2) hi = mid;
++    else                  lo = mid;
+   } while (lo + 1 < hi);
+   *i1 = hi;
+   lo = *i0;
+-  do { // search last index[lo].x < x1
++  do { // search last index[lo] < x1
+     mid = (lo + hi) >> 1;
+-    if (index[mid].x < x1) lo = mid;
+-    else                   hi = mid;
++    if (index[mid] < x1) lo = mid;
++    else                 hi = mid;
+   } while (lo + 1 < hi);
+   *i0 = lo;
+ }
+@@ -912,9 +929,10 @@
+   for (int t = 0; t < TRACES_MAX; t++) {
+     if (!trace[t].enabled)
+       continue;
+-    index_t *index = trace_index[t];
+-    int x = index[mk_idx].x - X_MARKER_OFFSET;
+-    int y = index[mk_idx].y + ((index[mk_idx].y < MARKER_HEIGHT * 2) ? 1 : -Y_MARKER_OFFSET);
++    const uint16_t  *index_x = trace_index_x[t];
++    const index_y_t *index_y = trace_index_y[t];
++    int x = index_x[mk_idx] - X_MARKER_OFFSET;
++    int y = index_y[mk_idx] + ((index_y[mk_idx] < MARKER_HEIGHT * 2) ? 1 : -Y_MARKER_OFFSET);
+     invalidate_rect(x, y, x+MARKER_WIDTH-1, y+MARKER_HEIGHT-1);
+   }
+ }
+@@ -963,12 +981,12 @@
+   if (current_trace == TRACE_INVALID || active_marker == MARKER_INVALID)
+       return;
+   // Select search index table
+-  index_t *index = trace_index[current_trace];
++  index_y_t *index = trace_index_y[current_trace];
+   // Select compare function (depend from config settings)
+   bool (*compare)(int x, int y) = VNA_MODE(VNA_MODE_SEARCH) ? _lesser : _greater;
+-  for (i = 1, value = index[0].y; i < sweep_points; i++) {
+-    if ((*compare)(value, index[i].y)) {
+-      value = index[i].y;
++  for (i = 1, value = index[0]; i < sweep_points; i++) {
++    if ((*compare)(value, index[i])) {
++      value = index[i];
+       found = i;
+   }
+ }
+@@ -981,20 +999,20 @@
+   if (current_trace == TRACE_INVALID || active_marker == MARKER_INVALID)
+     return;
+   // Select search index table
+-  index_t *index = trace_index[current_trace];
++  index_y_t *index = trace_index_y[current_trace];
+   // Select compare function (depend from config settings)
+   bool (*compare)(int x, int y) = VNA_MODE(VNA_MODE_SEARCH) ? _lesser : _greater;
+   // Search next
+-  for (i = from + dir, value = index[from].y; i >= 0 && i < sweep_points; i+=dir) {
+-    if ((*compare)(value, index[i].y))
++  for (i = from + dir, value = index[from]; i >= 0 && i < sweep_points; i+=dir) {
++    if ((*compare)(value, index[i]))
+       break;
+-    value = index[i].y;
++    value = index[i];
+   }
+   //
+   for (; i >= 0 && i < sweep_points; i+=dir) {
+-    if ((*compare)(index[i].y, value))
++    if ((*compare)(index[i], value))
+       break;
+-    value = index[i].y;
++    value = index[i];
+     found = i;
+ }
+   if (found < 0) return;
+@@ -1002,9 +1020,10 @@
+     }
+ 
+ int distance_to_index(int8_t t, uint16_t idx, int16_t x, int16_t y) {
+-  index_t *index = trace_index[t];
+-  x-= index[idx].x;
+-  y-= index[idx].y;
++  const uint16_t  *index_x = trace_index_x[t];
++  const index_y_t *index_y = trace_index_y[t];
++  x-= index_x[idx];
++  y-= index_y[idx];
+   return x*x + y*y;
+   }
+ 
+@@ -1144,7 +1163,6 @@
+ static void trace_into_index(int t) {
+   uint16_t start = 0, stop = sweep_points - 1, i;
+   float (*array)[2] = measured[trace[t].channel];
+-    index_t *index = trace_index[t];
+   uint32_t type    = 1<<trace[t].type;
+   get_value_cb_t c = trace_info_list[trace[t].type].get_value_cb; // Get callback for value calculation
+   float refpos = HEIGHT - (get_trace_refpos(t))*GRIDY + 0.5f;     // 0.5 for pixel align
+@@ -1163,7 +1181,7 @@
+              if (y <      0) y = 0;
+         else if (y > HEIGHT) y = HEIGHT;
+   }
+-      mark_set_index(index, i, (uint16_t)(x>>16), y);
++      mark_set_index(t, i, (uint16_t)(x>>16), y);
+ }
+     return;
+     }
+@@ -1173,7 +1191,7 @@
+     int16_t y, x;
+     for (i = start; i <= stop; i++){
+       cartesian_scale(array[i], &x, &y, rscale);
+-      mark_set_index(index, i, x, y);
++      mark_set_index(t, i, x, y);
+   }
+     return;
+   }
+@@ -1457,16 +1475,17 @@
+   for (t = TRACE_INDEX_COUNT-1; t >= 0; t--) {
+     int i0 = 0, i1 = getTracesPoints(t); // Get points count in trace t
+     if (i1 == 0) continue;
+-    index_t *index = trace_index[t];
++    const uint16_t  *index_x = trace_index_x[t];
++    const index_y_t *index_y = trace_index_y[t];
+     // On draw rectangular plot search index range in cell
+     if (t < TRACES_MAX && ((1 << trace[t].type) & RECTANGULAR_GRID_MASK))
+-      search_index_range_x(x0, x0 + w, index, &i0, &i1);
++      search_index_range_x(x0, x0 + w, t, &i0, &i1);
+     c = GET_PALTETTE_COLOR(LCD_TRACE_1_COLOR + t);
+     for (int i = i0; i < i1; i++) {
+-      int x1 = index[i].x - x0;
+-      int y1 = index[i].y - y0;
+-      int x2 = index[i + 1].x - x0;
+-      int y2 = index[i + 1].y - y0;
++      int x1 = index_x[i] - x0;
++      int y1 = index_y[i] - y0;
++      int x2 = index_x[i + 1] - x0;
++      int y2 = index_y[i + 1] - y0;
+       cell_drawline(x1, y1, x2, y2, c);
+     }
+   }
+@@ -1487,15 +1506,16 @@
+     for (t = 0; t < TRACES_MAX; t++) {
+       if (!trace[t].enabled)
+         continue;
+-      index_t *index = trace_index[t];
++      const uint16_t  *index_x = trace_index_x[t];
++      const index_y_t *index_y = trace_index_y[t];
+       const uint8_t *plate, *marker;
+-      x = index[mk_idx].x - x0 - X_MARKER_OFFSET;
+-      if (index[mk_idx].y < MARKER_HEIGHT * 2) {
+-        y = index[mk_idx].y - y0 + 1;
++      x = index_x[mk_idx] - x0 - X_MARKER_OFFSET;
++      if (index_y[mk_idx] < MARKER_HEIGHT * 2) {
++        y = index_y[mk_idx] - y0 + 1;
+         plate = MARKER_RBITMAP(0);
+         marker = MARKER_RBITMAP(i+1);
+       } else {
+-        y = index[mk_idx].y - y0 - Y_MARKER_OFFSET;
++        y = index_y[mk_idx] - y0 - Y_MARKER_OFFSET;
+         plate = MARKER_BITMAP(0);
+         marker = MARKER_BITMAP(i+1);
+       }

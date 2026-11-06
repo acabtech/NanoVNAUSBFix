@@ -112,7 +112,7 @@ the F072's 128 KiB flash; the last 32 KiB (`flash7`) is reserved for
 configuration storage. At `-O2` the unofficial image was 97,910 of 98,304 bytes,
 i.e. 394 bytes free, which is not enough for further milestones. The unofficial
 flavor therefore builds with `-Os` (added in `0005-m2-binary-data-transfer.patch`,
-gated on `USBTMC=yes`); the current image is 91,384 bytes and leaves about
+gated on `USBTMC=yes`); the current image is 91,448 bytes and leaves about
 6.7 KiB free. The official flavor keeps
 `-O2` and its frozen size. Sweep timing should be re-measured on hardware with
 `:VNA:SWE:TIME?` and `:VNA:SWE:RATE?` before release.
@@ -120,8 +120,8 @@ gated on `USBTMC=yes`); the current image is 91,384 bytes and leaves about
 ### SCPI state without extra BSS
 
 The v0.1.0 link left no free BSS: `_bss_end` was already at the end of RAM, so
-even a few new bytes failed to link. RAM-2/RAM-3 now leave 316 bytes free
-(`_bss_end` `0x20003ec4`), but the M1/M2 command state still lives in
+even a few new bytes failed to link. RAM-2/RAM-3/RAM-4 now leave 820 bytes free
+(`_bss_end` `0x20003ccc`), but the M1/M2 command state still lives in
 `properties_t._reserved1[]`, which upstream does not use, so it does not
 compete with future RAM work:
 

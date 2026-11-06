@@ -32,7 +32,7 @@ Work in progress; entries are added as milestones land.
   in [`docs/debugging.md`](docs/debugging.md).
 - The unofficial flavor now builds with `-Os`. The F072 code region is 96 KiB
   and the `-O2` image had 394 bytes free, so further milestones could not link.
-  After RAM-3 the image is 91,384 bytes, leaving about 6.7 KiB for M3/M5. The
+  After RAM-4 the image is 91,448 bytes, leaving about 6.7 KiB for M3/M5. The
   official `-USB-PCLK` image is unchanged in size (91,704 bytes) and still
   builds at `-O2`.
 
@@ -52,6 +52,13 @@ Work in progress; entries are added as milestones land.
   every structure that aliases it. This saves 48 bytes of RAM and 1,812 bytes
   of flash (GCC emits direct word accesses for the float views). `rx_buffer`
   is not a serial buffer; it is the 384-byte I2S DMA buffer and is unchanged.
+- RAM-4: `trace_index` is now a `uint16_t` x array plus a `uint8_t` y array
+  instead of a `uint16_t x/y` struct array. The cache holds already-clamped
+  screen pixels, and `HEIGHT` is 232 on the 320x240 F072 panel, so y fits in
+  8 bits (it widens automatically if `HEIGHT > 255`). Saves 504 bytes of RAM
+  (free RAM 316 -> 820; `_bss_end` `0x20003ccc`), with no change to
+  measurement data. A 50-frame redraw benchmark on hardware measured the same
+  time before and after (~20,599 ticks per full frame).
 - RAM-1: the unofficial flavor now builds with `FF_FS_TINY=1`
   (`patches/0007`). It was measured at **0 B** RAM saved, not the estimated
   ~512 B, because `FATFS` and `FIL` are overlaid in the fixed-size
