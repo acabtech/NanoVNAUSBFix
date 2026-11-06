@@ -141,8 +141,9 @@ and SD-card commands.
 ## Headless mode (RAM-8)
 
 The display can be turned off at runtime with the unofficial `headless on`
-shell command. Headless is not stored in `config`, so a power cycle always
-restores the normal display even if the USB link is unavailable.
+shell command or from the screen at `CONFIG -> CONNECTION -> HEADLESS MODE`.
+Headless is not stored in `config`, so a power cycle always restores the normal
+display even if the USB link is unavailable.
 
 When headless is active the sweep thread no longer calls `ui_process()` or
 `draw_all()`: the trace-index cache, the markmap and cell rendering are all

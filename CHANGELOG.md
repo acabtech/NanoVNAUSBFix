@@ -13,7 +13,8 @@ Work in progress; entries are added as milestones land.
 
 - RAM-8 headless mode (`0012-ram8-headless.patch`): `headless on|off` skips
   `ui_process()`, the trace-index cache and cell rendering, paints a notice
-  screen, and blinks the green LED at 1 Hz. With a continuous 101-point sweep
+  screen, and blinks the green LED at 1 Hz. It is also reachable from
+  `CONFIG -> CONNECTION -> HEADLESS MODE`. With a continuous 101-point sweep
   the sweep-thread loop period measured **568 ms in normal mode and 385 ms in
   headless** (1.48x throughput) on hardware. The render caches now live in a
   union with a reusable scratch arena (`plot_headless_scratch()`); `_bss_end`

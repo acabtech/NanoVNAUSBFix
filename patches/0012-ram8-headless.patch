@@ -1,5 +1,5 @@
---- a/plot.c	2026-11-06 23:42:10.676787901 +0700
-+++ b/plot.c	2026-11-06 23:48:06.960613742 +0700
+--- a/plot.c	2026-11-06 23:56:18.756825539 +0700
++++ b/plot.c	2026-11-06 23:55:46.623341187 +0700
 @@ -45,7 +45,7 @@
  #endif
  
@@ -115,8 +115,8 @@
  void plot_init(void) {
    request_to_redraw(REDRAW_PLOT | REDRAW_ALL);
    draw_all();
---- a/nanovna.h	2026-11-06 23:42:10.676906894 +0700
-+++ b/nanovna.h	2026-11-06 23:48:06.960733978 +0700
+--- a/nanovna.h	2026-11-06 23:56:18.756954040 +0700
++++ b/nanovna.h	2026-11-06 23:55:46.623468666 +0700
 @@ -1085,6 +1085,10 @@
  void request_to_draw_marker(uint16_t idx);
  void redraw_marker(int8_t marker);
@@ -128,8 +128,8 @@
  void set_area_size(uint16_t w, uint16_t h);
  void plot_set_measure_mode(uint8_t mode);
  uint16_t plot_get_measure_channels(void);
---- a/main.c	2026-11-06 23:42:10.677064991 +0700
-+++ b/main.c	2026-11-06 23:48:06.960892275 +0700
+--- a/main.c	2026-11-06 23:56:18.757114031 +0700
++++ b/main.c	2026-11-06 23:55:46.623632424 +0700
 @@ -330,29 +330,35 @@
      /* The USBTMC response lives in the LCD scratch buffer; pause drawing
         until the host has collected it. */
@@ -221,3 +221,35 @@
  #ifdef ENABLE_SD_CARD_COMMAND
      {"sd_list"     , cmd_sd_list     , CMD_WAIT_MUTEX|CMD_BREAK_SWEEP|CMD_RUN_IN_UI},
      {"sd_read"     , cmd_sd_read     , CMD_WAIT_MUTEX|CMD_BREAK_SWEEP|CMD_RUN_IN_UI},
+--- a/ui.c	2026-11-06 23:56:18.757316952 +0700
++++ b/ui.c	2026-11-06 23:55:46.623805880 +0700
+@@ -809,6 +809,7 @@
+  MENU_CONFIG_SAVE,
+  MENU_CONFIG_RESET,
+  MENU_CONFIG_LOAD,
++ MENU_CONFIG_HEADLESS,
+ };
+ 
+ static UI_FUNCTION_CALLBACK(menu_config_cb) {
+@@ -836,6 +837,13 @@
+         ui_message_box("Error", "No config.ini", 2000);
+       break;
+ #endif
++  case MENU_CONFIG_HEADLESS:
++      // RAM-8: one-way entry by design. The UI stops running in headless
++      // mode, so the only ways back are `headless off` over USB or a power
++      // cycle.
++      plot_set_headless(true);
++      ui_mode_normal();
++      return;
+   }
+   ui_mode_normal();
+   request_to_redraw(REDRAW_ALL);
+@@ -2435,6 +2443,7 @@
+ const menuitem_t menu_connection[] = {
+   { MT_ADV_CALLBACK, VNA_MODE_CONNECTION, "CONNECTION\n " R_LINK_COLOR "%s", menu_vna_mode_acb },
+   { MT_ADV_CALLBACK, 0, "SERIAL SPEED\n " R_LINK_COLOR "%u", menu_serial_speed_sel_acb },
++  { MT_CALLBACK, MENU_CONFIG_HEADLESS, "HEADLESS\nMODE", menu_config_cb },
+   { MT_NEXT, 0, NULL, menu_back } // next-> menu_back
+ };
+ #endif
