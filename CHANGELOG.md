@@ -11,6 +11,14 @@ Work in progress; entries are added as milestones land.
 
 ### Added
 
+- RAM-8 headless mode (`0012-ram8-headless.patch`): `headless on|off` skips
+  `ui_process()`, the trace-index cache and cell rendering, paints a notice
+  screen, and blinks the green LED at 1 Hz. With a continuous 101-point sweep
+  the sweep-thread loop period measured **568 ms in normal mode and 385 ms in
+  headless** (1.48x throughput) on hardware. The render caches now live in a
+  union with a reusable scratch arena (`plot_headless_scratch()`); `_bss_end`
+  is unchanged at `0x20003ccc`. The mode is runtime-only and deliberately not
+  persisted, so a power cycle restores the display.
 - Binary measurement transfer (M2, `0005-m2-binary-data-transfer.patch`):
   `:VNA:DATA:BLOCK?` returns a full or windowed sweep as an IEEE-488.2
   definite-length block of 12-byte points (`uint32` Hz, `float32` re, `float32`

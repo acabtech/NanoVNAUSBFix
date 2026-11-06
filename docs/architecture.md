@@ -138,6 +138,24 @@ One consequence: `:VNA:CMD? capture` is not supported, because the screenshot
 command also uses `spi_buffer` internally. Use the CDC interface for screenshots
 and SD-card commands.
 
+## Headless mode (RAM-8)
+
+The display can be turned off at runtime with the unofficial `headless on`
+shell command. Headless is not stored in `config`, so a power cycle always
+restores the normal display even if the USB link is unavailable.
+
+When headless is active the sweep thread no longer calls `ui_process()` or
+`draw_all()`: the trace-index cache, the markmap and cell rendering are all
+skipped. A one-time 240x320 notice is painted and the green LED blinks at
+1 Hz. On hardware, a continuous 101-point sweep loop measured 568 ms per
+iteration in normal mode and 385 ms headless; the ~183 ms difference is the
+measured full-frame render cost.
+
+The render-only caches (`trace_index_x`, `trace_index_y`, `markmap`, 1,532 B
+total) are a `union` with a scratch arena. `plot_headless_scratch()` returns
+the arena only while headless. Because the mode is runtime-only, `_bss_end`
+does not change; the memory is reused rather than removed from the image.
+
 ## omariglol integration
 
 `omariglol-core` already has:

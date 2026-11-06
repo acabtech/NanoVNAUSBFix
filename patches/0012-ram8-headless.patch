@@ -1,0 +1,223 @@
+--- a/plot.c	2026-11-06 23:42:10.676787901 +0700
++++ b/plot.c	2026-11-06 23:48:06.960613742 +0700
+@@ -45,7 +45,7 @@
+ #endif
+ 
+ // Mark cell to update here
+-static map_t markmap[MAX_MARKMAP_Y];
++// (allocated in the RAM-8 render/scratch union below)
+ 
+ // Trace data cache, for faster redraw cells.
+ // These are display pixel coordinates, not measurement values. x spans the
+@@ -62,8 +62,25 @@
+ typedef uint8_t index_y_t;
+ #endif
+ 
+-static uint16_t  trace_index_x[TRACE_INDEX_COUNT][SWEEP_POINTS_MAX];
+-static index_y_t trace_index_y[TRACE_INDEX_COUNT][SWEEP_POINTS_MAX];
++// RAM-8: the render-only caches are display state and are never used while
++// headless. Put them in a union with a reusable scratch arena so the same
++// bytes can be handed back to the rest of the firmware when the display is
++// off. This does not move _bss_end: the arena is exactly the render cache size.
++typedef struct {
++  uint16_t  trace_index_x[TRACE_INDEX_COUNT][SWEEP_POINTS_MAX];
++  index_y_t trace_index_y[TRACE_INDEX_COUNT][SWEEP_POINTS_MAX];
++  map_t     markmap[MAX_MARKMAP_Y];
++} plot_render_t;
++
++typedef union {
++  plot_render_t render;
++  uint8_t       scratch[sizeof(plot_render_t)];
++} plot_mem_t;
++
++static plot_mem_t plot_mem;
++#define trace_index_x (plot_mem.render.trace_index_x)
++#define trace_index_y (plot_mem.render.trace_index_y)
++#define markmap       (plot_mem.render.markmap)
+ 
+ #if 1
+ // All used in plot v > 0
+@@ -1779,6 +1796,77 @@
+   redraw_request|= mask;
+ }
+ 
++//**************************************************************************************
++//            RAM-8: headless mode
++//**************************************************************************************
++// Runtime-only: this is deliberately not stored in config, so a power cycle is
++// the guaranteed way back to a normal display even if USB/shell is unavailable.
++#define HEADLESS_ON     0x01
++#define HEADLESS_NOTICE 0x02
++static uint8_t headless_state;
++
++bool plot_headless_mode(void) {
++  return (headless_state & HEADLESS_ON) != 0;
++}
++
++// Return the render cache memory as a scratch arena while headless. Callers
++// must stop using it before calling plot_set_headless(false). Returns NULL and
++// size 0 in normal display mode.
++void *plot_headless_scratch(uint32_t *size) {
++  if (!plot_headless_mode()) {
++    if (size) *size = 0;
++    return NULL;
++  }
++  if (size) *size = sizeof(plot_mem.scratch);
++  return plot_mem.scratch;
++}
++
++static void plot_draw_headless_notice(void) {
++  lcd_set_colors(LCD_FG_COLOR, LCD_BG_COLOR);
++  lcd_clear_screen();
++  // Title at 2x; the body uses the small font (8 px versus 11 px normal),
++  // which is the closest available step to two-thirds of the title height.
++  lcd_drawstring_size("HEADLESS MODE", 8, 8, 2);
++  lcd_set_font(FONT_SMALL);
++  lcd_drawstring(8,  48, "Display disabled.");
++  lcd_drawstring(8,  62, "Data is on USB.");
++  lcd_drawstring(8,  80, "Green LED blinks while alive.");
++  lcd_drawstring(8,  94, "Power cycle to restore display.");
++  lcd_set_font(FONT_NORMAL);
++}
++
++void plot_set_headless(bool on) {
++  if (on == plot_headless_mode()) return;
++  if (on) {
++    headless_state = HEADLESS_ON | HEADLESS_NOTICE;
++    // The stored-trace cache is display-only and lives in the union now.
++#if STORED_TRACES > 0
++    enabled_store_trace = 0;
++    for (int i = 0; i < TRACE_INDEX_COUNT - TRACES_MAX; i++)
++      stored_traces_points[i] = 0;
++#endif
++    redraw_request = 0;
++  } else {
++    headless_state = 0;
++    request_to_redraw(REDRAW_PLOT | REDRAW_ALL);
++  }
++}
++
++// Called from the sweep thread only when a USBTMC response is not pending, so
++// it may borrow spi_buffer for the one-time notice screen.
++void plot_headless_service(void) {
++  if (!plot_headless_mode()) return;
++  // 1 Hz square wave derived from the system tick; no extra timer state.
++  if ((chVTGetSystemTimeX() / MS2ST(500)) & 1)
++    palSetPad(GPIOC, GPIOC_LED);
++  else
++    palClearPad(GPIOC, GPIOC_LED);
++  if (headless_state & HEADLESS_NOTICE) {
++    headless_state&= ~HEADLESS_NOTICE;
++    plot_draw_headless_notice();
++  }
++}
++
+ void plot_init(void) {
+   request_to_redraw(REDRAW_PLOT | REDRAW_ALL);
+   draw_all();
+--- a/nanovna.h	2026-11-06 23:42:10.676906894 +0700
++++ b/nanovna.h	2026-11-06 23:48:06.960733978 +0700
+@@ -1085,6 +1085,10 @@
+ void request_to_draw_marker(uint16_t idx);
+ void redraw_marker(int8_t marker);
+ void draw_all(void);
++bool plot_headless_mode(void);
++void plot_set_headless(bool on);
++void plot_headless_service(void);
++void *plot_headless_scratch(uint32_t *size);
+ void set_area_size(uint16_t w, uint16_t h);
+ void plot_set_measure_mode(uint8_t mode);
+ uint16_t plot_get_measure_channels(void);
+--- a/main.c	2026-11-06 23:42:10.677064991 +0700
++++ b/main.c	2026-11-06 23:48:06.960892275 +0700
+@@ -330,29 +330,35 @@
+     /* The USBTMC response lives in the LCD scratch buffer; pause drawing
+        until the host has collected it. */
+     if (!usbtmc_response_pending()) {
+-      // Process UI inputs
+-      sweep_mode|= SWEEP_UI_MODE;
+-      ui_process();
+-      sweep_mode&=~SWEEP_UI_MODE;
+-      // Process collected data, calculate trace coordinates and plot only if scan completed
+-      if (completed) {
++      if (plot_headless_mode()) {
++        // RAM-8: no UI polling, no trace cache, no cell rendering. The render
++        // union is free for reuse and the LED provides the liveness signal.
++        plot_headless_service();
++      } else {
++        // Process UI inputs
++        sweep_mode|= SWEEP_UI_MODE;
++        ui_process();
++        sweep_mode&=~SWEEP_UI_MODE;
++        // Process collected data, calculate trace coordinates and plot only if scan completed
++        if (completed) {
+ #ifdef __USE_SMOOTH__
+ //      START_PROFILE;
+-        if (smooth_factor)
+-          measurementDataSmooth(mask);
++          if (smooth_factor)
++            measurementDataSmooth(mask);
+ //      STOP_PROFILE;
+ #endif
+ //        START_PROFILE
+-        if ((props_mode & DOMAIN_MODE) == DOMAIN_TIME) transform_domain(mask);
++          if ((props_mode & DOMAIN_MODE) == DOMAIN_TIME) transform_domain(mask);
+ //        STOP_PROFILE;
+-        // Prepare draw graphics, cache all lines, mark screen cells for redraw
+-        request_to_redraw(REDRAW_PLOT);
+-      }
+-      request_to_redraw(REDRAW_BATTERY);
++          // Prepare draw graphics, cache all lines, mark screen cells for redraw
++          request_to_redraw(REDRAW_PLOT);
++        }
++        request_to_redraw(REDRAW_BATTERY);
+ #ifndef DEBUG_CONSOLE_SHOW
+-      // plot trace and other indications as raster
+-      draw_all();
++        // plot trace and other indications as raster
++        draw_all();
+ #endif
++      }
+     }
+   }
+ }
+@@ -771,6 +777,31 @@
+ }
+ #endif
+ 
++// RAM-8: runtime-only headless mode. Not stored in config, so a power cycle is
++// the guaranteed way back to the normal display.
++VNA_SHELL_FUNCTION(cmd_headless)
++{
++  if (argc == 0) {
++    if (plot_headless_mode()) {
++      uint32_t size;
++      plot_headless_scratch(&size);
++      shell_printf("headless: on, scratch %u bytes" VNA_SHELL_NEWLINE_STR,
++                   (unsigned)size);
++    } else {
++      shell_printf("headless: off" VNA_SHELL_NEWLINE_STR);
++    }
++    return;
++  }
++  int v = get_str_index(argv[0], "on|off");
++  if (v < 0) {
++    shell_printf("usage: headless {on|off}" VNA_SHELL_NEWLINE_STR);
++    return;
++  }
++  plot_set_headless(v == 0);
++  shell_printf("headless %s (power cycle to restore display)" VNA_SHELL_NEWLINE_STR,
++               v == 0 ? "on" : "off");
++}
++
+ #ifdef __VNA_ENABLE_DAC__
+ VNA_SHELL_FUNCTION(cmd_dac)
+ {
+@@ -3054,6 +3085,7 @@
+ #ifdef __USE_RTC__
+     {"time"        , cmd_time        , CMD_RUN_IN_UI},
+ #endif
++    {"headless"    , cmd_headless    , 0},
+ #ifdef ENABLE_SD_CARD_COMMAND
+     {"sd_list"     , cmd_sd_list     , CMD_WAIT_MUTEX|CMD_BREAK_SWEEP|CMD_RUN_IN_UI},
+     {"sd_read"     , cmd_sd_read     , CMD_WAIT_MUTEX|CMD_BREAK_SWEEP|CMD_RUN_IN_UI},
