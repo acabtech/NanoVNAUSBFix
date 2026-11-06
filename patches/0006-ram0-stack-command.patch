@@ -1,0 +1,68 @@
+--- a/main.c
++++ b/main.c
+@@ -73,6 +73,8 @@
+ #define ENABLED_DUMP_COMMAND
+ // Allow get threads debug info
+ //#define ENABLE_THREADS_COMMAND
++// Enable stack high-water measurement without CH_CFG_USE_REGISTRY
++#define ENABLE_STACK_COMMAND
+ // Enable vbat_offset command, allow change battery voltage correction in config
+ #define ENABLE_VBAT_OFFSET_COMMAND
+ // Info about NanoVNA, need fore soft
+@@ -2811,6 +2813,46 @@
+ }
+ #endif
+ 
++#ifdef ENABLE_STACK_COMMAND
++/*
++ * Report high-water stack usage for the static threads. ChibiOS fills each
++ * working area with CH_DBG_STACK_FILL_VALUE and crt0 fills the main/process
++ * stack with 0x55, so the contiguous fill at the base is the free stack.
++ * This avoids CH_CFG_USE_REGISTRY, which the "threads" command requires.
++ */
++#if CH_DBG_FILL_THREADS == TRUE
++static void stack_report(const char *name, const uint8_t *base, uint32_t size)
++{
++  uint32_t free_bytes = 0;
++  while (free_bytes < size && base[free_bytes] == CH_DBG_STACK_FILL_VALUE)
++    free_bytes++;
++  shell_printf("%-8s %6u %6u %6u" VNA_SHELL_NEWLINE_STR,
++               name, (unsigned)size, (unsigned)free_bytes,
++               (unsigned)(size - free_bytes));
++}
++#endif
++
++VNA_SHELL_FUNCTION(cmd_stack)
++{
++  extern stkalign_t __main_thread_stack_base__;
++  extern stkalign_t __main_thread_stack_end__;
++  (void)argc;
++  (void)argv;
++#if CH_DBG_FILL_THREADS == TRUE
++  {
++    const uint8_t *main_base = (const uint8_t *)&__main_thread_stack_base__;
++    uint32_t main_size = (uint32_t)((const uint8_t *)&__main_thread_stack_end__ -
++                                    main_base);
++    shell_printf("thread     size   free   used" VNA_SHELL_NEWLINE_STR);
++    stack_report("sweep", (const uint8_t *)waThread1, sizeof(waThread1));
++    stack_report("main", main_base, main_size);
++  }
++#else
++  shell_printf("stack fill disabled" VNA_SHELL_NEWLINE_STR);
++#endif
++}
++#endif
++
+ #ifdef __USE_SERIAL_CONSOLE__
+ #ifdef ENABLE_USART_COMMAND
+ VNA_SHELL_FUNCTION(cmd_usart_cfg)
+@@ -3101,6 +3143,9 @@
+ #ifdef ENABLE_THREADS_COMMAND
+     {"threads"     , cmd_threads     , 0},
+ #endif
++#ifdef ENABLE_STACK_COMMAND
++    {"stack"       , cmd_stack       , 0},
++#endif
+ #ifdef ENABLE_SI5351_TIMINGS
+     {"t"           , cmd_si5351time  , CMD_WAIT_MUTEX},
+ #endif

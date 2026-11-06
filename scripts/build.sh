@@ -33,6 +33,9 @@ case "$VARIANT" in
       patches/0003-usbtmc-shell-output.patch
       patches/0004-scpi-foundation-sweep-parity.patch
       patches/0005-m2-binary-data-transfer.patch
+      patches/0006-ram0-stack-command.patch
+      patches/0007-ram1-ff-fs-tiny.patch
+      patches/0008-fix-spi-buffer-alignment.patch
     )
     ARTIFACT="NanoVNA-H-${PROJECT_VERSION}"
     MAKE_ARGS=(TARGET=F072 USBTMC=yes)

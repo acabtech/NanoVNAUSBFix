@@ -1,0 +1,22 @@
+--- a/lcd.c
++++ b/lcd.c
+@@ -64,7 +64,7 @@
+ #endif
+ 
+ // LCD display buffer
+-pixel_t spi_buffer[SPI_BUFFER_SIZE];
++pixel_t spi_buffer[SPI_BUFFER_SIZE] __attribute__((aligned(4)));
+ // Default foreground & background colors
+ pixel_t foreground_color = 0;
+ pixel_t background_color = 0;
+--- a/nanovna.h
++++ b/nanovna.h
+@@ -1260,7 +1260,7 @@
+ extern pixel_t foreground_color;
+ extern pixel_t background_color;
+ 
+-extern pixel_t spi_buffer[SPI_BUFFER_SIZE];
++extern pixel_t spi_buffer[SPI_BUFFER_SIZE] __attribute__((aligned(4)));
+ 
+ typedef struct {
+   uint8_t transparent : 1;

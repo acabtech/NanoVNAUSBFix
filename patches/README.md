@@ -23,6 +23,9 @@ source root. `scripts/build.sh` applies them in this order.
 | `0003-usbtmc-shell-output.patch` | unofficial only | Route USBTMC shell output per-thread and buffer the `chvprintf()` byte path. Fixes the `:VNA:CMD?` hang and empty responses. |
 | `0004-scpi-foundation-sweep-parity.patch` | unofficial only | M1 SCPI foundation (error queue, `:SYST:*`, UID serial, abort) and M2 sweep/acquisition parity (center/span, single/continuous, status, averaging, IFBW, power, telemetry). Authored by acabtech and @brrrassica. |
 | `0005-m2-binary-data-transfer.patch` | unofficial only | M2 binary measurement transfer: IEEE-488.2 definite-length blocks (`:VNA:DATA:BLOCK?`, `:VNA:DATA:CHUNK? ...,BIN`) and the `:VNA:DATA:PRE?` preamble. Also reports the `1.3.0-omariglol` release identity in `*IDN?` and builds the unofficial flavor with `-Os` to fit the 96 KiB code region. |
+| `0006-ram0-stack-command.patch` | unofficial only | Adds the `stack` shell command, which reports high-water stack usage for the sweep and main threads by scanning the ChibiOS fill pattern. No thread registry is required, so it does not add RAM. |
+| `0007-ram1-ff-fs-tiny.patch` | unofficial only | Sets `FF_FS_TINY=1` in `FatFs/ffconf_072.h`. Measured saving is 0 B while FatFs stays overlaid in `spi_buffer`; kept as a prerequisite for a future `SPI_BUFFER_SIZE` reduction. |
+| `0008-fix-spi-buffer-alignment.patch` | unofficial only | Forces 4-byte alignment of `spi_buffer`. The LCD cell-clear code writes it as `uint32_t`, and the unofficial BSS layout placed it at a 2-byte-aligned address, causing an unaligned store HardFault before USB could enumerate. |
 | `optional-rtc-default-time.patch` | not applied | Seed an uninitialised RTC to 2026-11-01 00:00:00. |
 
 ## Regenerating a patch

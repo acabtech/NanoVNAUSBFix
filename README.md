@@ -114,6 +114,17 @@ Or use the helper:
 Recovery is the same as stock: re-enter DFU (CONFIG → DFU, or short BOOT0 to
 VDD) and flash a known-good image. See [`docs/flashing.md`](docs/flashing.md).
 
+If USB/DFU does not enumerate, use the non-USB paths:
+
+```bash
+make recover         # ST-Link on SWD via OpenOCD
+make recover-uart    # STM32 ROM UART bootloader via stm32flash
+```
+
+Both default to the official recovery image; set `IMAGE=` to use the
+unofficial build. Wiring and profiling notes are in
+[`docs/debugging.md`](docs/debugging.md).
+
 ## Build from source
 
 Requirements: `arm-none-eabi-gcc`, GNU make, `curl`, `tar`, `7z`, `patch`.
@@ -154,6 +165,8 @@ scripts/
   fetch-upstream.sh      unpack the pinned tree for inspection
   verify.sh              artifact size/symbol/hash checks
   flash.sh               dfu-util helper
+  recover-openocd.sh     ST-Link/OpenOCD recovery over SWD
+  recover-uart.sh        ROM UART bootloader recovery via stm32flash
   install-udev.sh        grant USBTMC access to the active user
   uninstall-udev.sh      remove the USBTMC udev rule
   capture-scpi-baseline.sh  record the read-only SCPI contract
@@ -162,6 +175,7 @@ docs/
   usb-api.md             USBTMC/SCPI command reference
   building.md            toolchain and offline-build notes
   flashing.md            DFU and recovery
+  debugging.md           ST-Link/UART rescue and stack profiling
   testing.md             CI and hardware smoke tests
   testing/               recorded baseline transcripts
   experiments/           failed CRS experiment, kept for the record

@@ -64,6 +64,18 @@ If the display stays dark or USB does not enumerate:
 
 DFU mode is in ROM and cannot be bricked by a bad application image.
 
+If USB/DFU itself does not enumerate, use one of the non-USB recovery paths:
+
+- [`scripts/recover-openocd.sh`](../scripts/recover-openocd.sh) — ST-Link on SWD
+  (PA13/PA14) via OpenOCD. Works when the application has disabled SWD if run
+  with `--connect-under-reset`.
+- [`scripts/recover-uart.sh`](../scripts/recover-uart.sh) — STM32 ROM UART
+  bootloader on USART1 (PA9/PA10) via `stm32flash`.
+
+Both default to the official PCLK recovery image and accept the unofficial
+image as an argument. See [`docs/debugging.md`](debugging.md) for wiring,
+commands and profiling/stack inspection.
+
 ## After flashing
 
 - Recalibrate; calibration lives in the config area and is preserved by a

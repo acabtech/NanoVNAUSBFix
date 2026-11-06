@@ -16,6 +16,15 @@ OFFICIAL_MAX=92160
 UNOFFICIAL_MAX=96256
 FLASH_MAX=98304
 
+# RAM budgets. Warn when free SRAM drops below 1 KiB and fail below 200 bytes.
+# `FF_FS_TINY=1` measured 0 B saved because FatFs is overlaid in spi_buffer, so
+# the unofficial image is still well below the floor. CI sets RAM_ALLOW_LOW=1
+# temporarily, which downgrades the hard failure to a warning; remove that
+# allowance once RAM-2/RAM-6 raise free RAM above the floor.
+RAM_WARN_FREE=1024
+RAM_MIN_FREE=200
+RAM_ALLOW_LOW="${RAM_ALLOW_LOW:-0}"
+
 check_variant() {
   local variant="$1"
   local artifact="$2"
@@ -44,6 +53,30 @@ check_variant() {
     FAIL=1
   else
     echo "  image size: ${size} bytes (budget ${max_size})"
+  fi
+
+  if [[ -s "$elf" ]]; then
+    local bss_end ram_end free_ram
+    bss_end=$(arm-none-eabi-nm "$elf" | awk '$3 == "_bss_end" { print $1 }')
+    ram_end=$(arm-none-eabi-nm "$elf" | awk '$3 == "__ram0_end__" { print $1 }')
+    if [[ -n "$bss_end" && -n "$ram_end" ]]; then
+      free_ram=$((16#$ram_end - 16#$bss_end))
+      if (( free_ram < RAM_MIN_FREE )); then
+        if [[ "$RAM_ALLOW_LOW" == "1" ]]; then
+          echo "  WARNING: only ${free_ram} bytes of RAM free (floor ${RAM_MIN_FREE}); allowed by RAM_ALLOW_LOW=1" >&2
+        else
+          echo "  only ${free_ram} bytes of RAM free, below the ${RAM_MIN_FREE}-byte floor" >&2
+          FAIL=1
+        fi
+      elif (( free_ram < RAM_WARN_FREE )); then
+        echo "  WARNING: only ${free_ram} bytes of RAM free (target ${RAM_WARN_FREE})" >&2
+      else
+        echo "  RAM free: ${free_ram} bytes"
+      fi
+    else
+      echo "  could not read _bss_end/__ram0_end__ from $elf" >&2
+      FAIL=1
+    fi
   fi
 
   (cd "$dir" && sha256sum -c SHA256SUMS >/dev/null) || {

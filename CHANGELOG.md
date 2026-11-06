@@ -18,6 +18,18 @@ Work in progress; entries are added as milestones land.
   argument. A 101-point sweep is one 1,218-byte response.
 - `:VNA:DATA:PRE?` returns a waveform-style preamble
   (`points,start_hz,step_hz,RI32,12`).
+- RAM-0 process safeguards: `scripts/verify.sh` now reads `_bss_end` and
+  `__ram0_end__` from each ELF, warns below 1 KiB free and fails below 200 B
+  (`RAM_ALLOW_LOW=1` is a one-off local override). `patches/0006` adds a
+  `stack` shell command that reports high-water usage for the `sweep` and
+  `main` stacks without enabling `CH_CFG_USE_REGISTRY`.
+- Non-USB recovery tooling:
+  [`scripts/recover-openocd.sh`](scripts/recover-openocd.sh) flashes over
+  ST-Link/SWD with OpenOCD, and
+  [`scripts/recover-uart.sh`](scripts/recover-uart.sh) uses the STM32 ROM UART
+  bootloader. Both accept either image, install missing packages, can install
+  the pinned toolchain and the NanoVNA + ST-Link udev rules, and are documented
+  in [`docs/debugging.md`](docs/debugging.md).
 - The unofficial flavor now builds with `-Os`. The F072 code region is 96 KiB
   and the `-O2` image had 394 bytes free, so further milestones could not link.
   Image size is 93,176 bytes, leaving about 5 KiB for M3/M5. The official
@@ -26,6 +38,11 @@ Work in progress; entries are added as milestones land.
 
 ### Changed
 
+- RAM-1: the unofficial flavor now builds with `FF_FS_TINY=1`
+  (`patches/0007`). It was measured at **0 B** RAM saved, not the estimated
+  ~512 B, because `FATFS` and `FIL` are overlaid in the fixed-size
+  `spi_buffer`. The setting is retained as a prerequisite for a future
+  `SPI_BUFFER_SIZE` reduction.
 - Release assets are now versioned with the project identity rather than the
   pinned upstream version: `NanoVNA-H-1.3.0-omariglol-USB-PCLK.*` (previously
   `NanoVNA-H-1.2.50-USB-PCLK.*`) and `NanoVNA-H-1.3.0-omariglol.*` (previously
@@ -36,6 +53,12 @@ Work in progress; entries are added as milestones land.
 
 ### Fixed
 
+- Fixed the unofficial-image boot hang: `draw_cell()` clears `spi_buffer` with
+  32-bit stores, but the unofficial BSS layout placed `spi_buffer` at a
+  two-byte-aligned address. Cortex-M0 raises a HardFault on the unaligned
+  `str`, leaving the USB device unable to answer enumeration. `patches/0008`
+  forces `spi_buffer` to 4-byte alignment. The official image already landed on
+  a 4-byte-aligned address and is unchanged.
 - CI and release builds now run in an `archlinux:base-devel` container with the
   pinned GCC 16.2.0 / binutils 2.47 / newlib 4.6.0.20260123 toolchain. Ubuntu's
   `gcc-arm-none-eabi` 13.2.1 linked a 94,208-byte official image and failed the
