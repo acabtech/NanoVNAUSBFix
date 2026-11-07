@@ -82,11 +82,14 @@ Work in progress; entries are added as milestones land.
   bootloader. Both accept either image, install missing packages, can install
   the pinned toolchain and the NanoVNA + ST-Link udev rules, and are documented
   in [`docs/debugging.md`](docs/debugging.md).
-- The unofficial flavor now builds with `-Os`. The F072 code region is 96 KiB
-  and the `-O2` image had 394 bytes free, so further milestones could not link.
-  After RAM-4 the image is 91,448 bytes, leaving about 6.7 KiB for M3/M5. The
-  official `-USB-PCLK` image is unchanged in size (91,704 bytes) and still
-  builds at `-O2`.
+- The unofficial flavor is back on `-O2`
+  (`0017-unofficial-build-o2.patch`). `0005` had switched it to `-Os` because the
+  old 96 KiB code region was full at `-O2` (97,910 of 98,304 bytes, 394 free).
+  FLASH-1 widened that region to 108 KiB, so the override is no longer needed:
+  measured on the same tree, `-Os` gives 93,020 bytes and `-O2` 100,212 bytes,
+  leaving 10,380 bytes of region free. RAM changes by 4 bytes (alignment), and
+  the worst stack frame is unchanged (`cmd_dump`, 416 bytes). The official
+  `-USB-PCLK` image is unchanged in size (91,648 bytes) and stays frozen.
 
 ### Changed
 

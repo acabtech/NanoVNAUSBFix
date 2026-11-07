@@ -110,13 +110,31 @@ sweep buffer is allocated; the encoder reads the existing measurement arrays.
 Since FLASH-1 the linker script gives the application **114 KiB** of the F072's
 128 KiB flash for the official flavor (`108 KiB` for the unofficial one); the
 remainder (`flash7`) is reserved for configuration and calibration storage — 14
-KiB official, 20 KiB unofficial. At `-O2` the unofficial image was 97,910 of 98,304 bytes,
-i.e. 394 bytes free, which is not enough for further milestones. The unofficial
-flavor therefore builds with `-Os` (added in `0005-m2-binary-data-transfer.patch`,
-gated on `USBTMC=yes`); the current image is 91,448 bytes and leaves about
-6.7 KiB free. The official flavor keeps
-`-O2` and its frozen size. Sweep timing should be re-measured on hardware with
-`:VNA:SWE:TIME?` and `:VNA:SWE:RATE?` before release.
+KiB official, 20 KiB unofficial.
+
+Both flavors now build at `-O2`. The unofficial flavor had been switched to
+`-Os` by `0005-m2-binary-data-transfer.patch` because the old 96 KiB code
+region was full at `-O2` (the image was 97,910 of 98,304 bytes, 394 bytes free).
+FLASH-1 widened that region to 108 KiB, and
+`0017-unofficial-build-o2.patch` drops the `-Os` override. Measured with the
+same source tree:
+
+| Optimisation | `.bin` size | Free in `flash0` | Free RAM |
+| --- | ---: | ---: | ---: |
+| `-Os` | 93,020 B | 17,572 B | 4,776 B |
+| `-O2` | 100,212 B | 10,380 B | 4,772 B |
+
+So `-O2` costs 7,192 bytes of flash and 4 bytes of RAM (alignment padding) and
+still leaves 10 KiB of region free. The official flavor keeps `-O2` and its
+frozen size (91,648 B of a 92,160 B budget; it does not draw on the 18 KiB
+FLASH-1 gave back, so the frozen-baseline rule still holds).
+
+Stack usage was re-checked at `-O2` from the `-fstack-usage` output: the worst
+single frame is still `cmd_dump` at 416 bytes, which is the case already
+measured on hardware (736 B including `thread_t`, 136 B margin in the 704-byte
+`sweep` thread). Sweep timing should be re-measured on hardware with
+`:VNA:SWE:TIME?` and `:VNA:SWE:RATE?` before release, since `-O2` changes the
+generated code.
 
 ### Calibration storage (RAM-6)
 

@@ -7,14 +7,22 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 FAIL=0
 
-# Flash budgets. The STM32F072 has 128 KiB of flash, but the NanoVNA-H linker
-# script gives the application only the first 96 KiB (flash0); the last 32 KiB
-# (flash7) is reserved for configuration storage. The official image is frozen
-# at the v0.1.0 baseline (91,704 bytes, -O2). The unofficial image is built with
-# -Os and must keep 2 KiB clear of the code region for safety.
-OFFICIAL_MAX=92160
-UNOFFICIAL_MAX=96256
-FLASH_MAX=98304
+# Flash budgets. The STM32F072 has 128 KiB of flash. Since FLASH-1 the code
+# region (flash0) is flavor-specific, because each flavor reserves a different
+# amount of storage in flash7:
+#
+#   official    flash0 114 KiB, flash7 14 KiB  (0x0801C800 + 0x3800)
+#   unofficial  flash0 108 KiB, flash7 20 KiB  (0x0801B000 + 0x5000)
+#
+# The *_FLASH0_LIMIT values are the actual region sizes from each linker script,
+# so an image that no longer fits the reservation is caught here. The budgets
+# sit below that: official stays frozen at the v0.1.0 baseline (91,704 bytes,
+# -O2) despite gaining 18 KiB, and unofficial keeps 2 KiB of margin under its
+# new region rather than the old 96 KiB one.
+OFFICIAL_MAX=92160             # frozen v0.1.0 baseline; not raised by FLASH-1
+UNOFFICIAL_MAX=108544          # -O2 image 100,212 B + 8 KiB margin
+OFFICIAL_FLASH0_LIMIT=116736   # flash0 114k
+UNOFFICIAL_FLASH0_LIMIT=110592 # flash0 108k
 
 # RAM budgets. Warn when free SRAM drops below 1 KiB and fail below 200 bytes.
 # RAM-2/RAM-3 raised the unofficial image from 12 to 316 bytes free, so it now
@@ -29,6 +37,7 @@ check_variant() {
   local variant="$1"
   local artifact="$2"
   local max_size="$3"
+  local flash0_limit="$4"
   local dir="$DIST/$variant"
   local bin="$dir/$artifact.bin"
   local hex="$dir/$artifact.hex"
@@ -45,14 +54,14 @@ check_variant() {
 
   local size
   size=$(stat -c%s "$bin")
-  if (( size > FLASH_MAX )); then
-    echo "  $bin is ${size} bytes, larger than the 128 KiB flash" >&2
+  if (( size > flash0_limit )); then
+    echo "  $bin is ${size} bytes, larger than the ${flash0_limit}-byte flash0 region for $variant" >&2
     FAIL=1
   elif (( size > max_size )); then
     echo "  $bin is ${size} bytes, over the ${max_size}-byte budget for $variant" >&2
     FAIL=1
   else
-    echo "  image size: ${size} bytes (budget ${max_size})"
+    echo "  image size: ${size} bytes (budget ${max_size}, region ${flash0_limit})"
   fi
 
   if [[ -s "$elf" ]]; then
@@ -85,8 +94,8 @@ check_variant() {
   }
 }
 
-check_variant official NanoVNA-H-1.3.1-omariglol-USB-PCLK "$OFFICIAL_MAX"
-check_variant unofficial NanoVNA-H-1.3.1-omariglol "$UNOFFICIAL_MAX"
+check_variant official NanoVNA-H-1.3.1-omariglol-USB-PCLK "$OFFICIAL_MAX" "$OFFICIAL_FLASH0_LIMIT"
+check_variant unofficial NanoVNA-H-1.3.1-omariglol "$UNOFFICIAL_MAX" "$UNOFFICIAL_FLASH0_LIMIT"
 
 unofficial_elf="$DIST/unofficial/NanoVNA-H-1.3.1-omariglol.elf"
 official_elf="$DIST/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.elf"

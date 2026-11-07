@@ -42,15 +42,21 @@ frozen: it may only change for a confirmed USB bug with a reproduction and a
 regression test. The unofficial image has room to grow for v0.2.0 but must stay
 under the budget enforced by [`scripts/verify.sh`](../scripts/verify.sh:10).
 
-| Flavor | v0.1.0 image size | v0.1.0 `.bin` SHA-256 | Budget |
-| --- | --- | --- | --- |
-| Official (`USB-PCLK`) | 91,704 bytes | `2148dc2638a469a6d9893518f73daca9d8b104c952671611af9f3798efe9dbc2` | 92,160 bytes |
-| Unofficial (`USBTMC`) | 95,432 bytes | `b472d71bf94c1fd49d9f6b8fa5813198d181508cfc03d0ef62c0b740822a5300` | 96,256 bytes |
+| Flavor | v0.1.0 image size | v0.1.0 `.bin` SHA-256 | Budget | `flash0` region |
+| --- | --- | --- | --- | --- |
+| Official (`USB-PCLK`) | 91,704 bytes | `2148dc2638a469a6d9893518f73daca9d8b104c952671611af9f3798efe9dbc2` | 92,160 bytes | 114 KiB |
+| Unofficial (`USBTMC`) | 95,432 bytes | `b472d71bf94c1fd49d9f6b8fa5813198d181508cfc03d0ef62c0b740822a5300` | 108,544 bytes | 108 KiB |
 
-The budget follows the hardware, not the 128 KiB flash: the NanoVNA-H linker
-script maps only the first 96 KiB to `flash0`, so anything above 98,304 bytes
-cannot link. The unofficial flavor builds with `-Os` from v0.2.0 onward; the
-current image (including RAM-2/RAM-3/RAM-4) is 91,448 bytes.
+The budget follows each flavor's `flash0` region, not the full 128 KiB. Since
+FLASH-1 the two flavors reserve different amounts of flash for calibration
+storage, so the code regions differ: the official linker maps 114 KiB to
+`flash0` (14 KiB reserved) and the unofficial one 108 KiB (20 KiB reserved).
+`scripts/verify.sh` enforces both the per-flavor budget and the hard region
+limit. Both flavors build at `-O2`; the unofficial flavor's temporary `-Os`
+override was dropped once FLASH-1 widened its region (see
+[`docs/architecture.md`](architecture.md:108)). The current unofficial image
+(after RAM-2/RAM-3/RAM-4 and FLASH-1) is 100,212 bytes, leaving 10,380 bytes of
+the 108 KiB region free.
 
 The v0.1.0 SCPI command contract and the read-only baseline transcript live in
 [`testing/v0.1.0-scpi-baseline.md`](v0.1.0-scpi-baseline.md). Re-record the

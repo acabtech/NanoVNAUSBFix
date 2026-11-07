@@ -1,0 +1,26 @@
+# FLASH-1 follow-up: drop the -Os override for the unofficial flavor.
+#
+# 0005 added "USE_OPT += -Os" because the F072 code region was 96 KiB and the
+# -O2 image left only 394 bytes free. 0016 (FLASH-1) widened that region to
+# 108 KiB (110,592 bytes), so -O2 now fits comfortably:
+#
+#   -Os  93,020 bytes   (+4,776 B RAM free)
+#   -O2 100,212 bytes   (+4,772 B RAM free, 10,380 bytes of region left)
+#
+# The 7,192-byte increase buys the faster optimisation level for the whole
+# unofficial image. RAM is essentially unchanged (the 4-byte difference is
+# alignment padding from slightly different code layout).
+#
+--- a/Makefile
++++ b/Makefile
+@@ -21,10 +21,6 @@
+ # Unofficial build: expose the VNA over USBTMC.
+ ifeq ($(USBTMC),yes)
+ USE_OPT += -DNANOVNA_USBTMC
+-# The F072 code region is 96 KiB and the -O2 image leaves under 400 bytes free,
+-# so the host-facing feature set is built with -Os. The official flavor keeps
+-# -O2 and is unaffected.
+-USE_OPT += -Os
+ endif
+ 
+ # additional options, use math optimisations

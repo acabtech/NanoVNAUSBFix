@@ -5,7 +5,10 @@
 
 RECOVERY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RECOVERY_EXPECTED_GCC="16.2.0"
-RECOVERY_FLASH_MAX=98304
+# Largest image region any flavor can produce since FLASH-1: the official
+# flash0 is 114 KiB. Recovery accepts either flavor, so the limit is the larger
+# one; a corrupt image still fails the vector-table checks below.
+RECOVERY_FLASH_MAX=116736
 RECOVERY_IMAGE=""
 RECOVERY_IMAGE_SIZE=0
 RECOVERY_INSTALL_DEPS="${RECOVERY_INSTALL_DEPS:-0}"
