@@ -1,0 +1,30 @@
+--- a/hardware.h
++++ b/hardware.h
+@@ -188,7 +188,7 @@
+ 
+ #define FLASH_PAGESIZE 0x800
+ 
+-#define SAVEAREA_MAX 5
++#define SAVEAREA_MAX 2
+ 
+ // Depend from config_t size, should be aligned by FLASH_PAGESIZE
+ #define SAVE_CONFIG_SIZE        0x00000800
+--- a/NANOVNA_STM32_F072/STM32F072xB.ld
++++ b/NANOVNA_STM32_F072/STM32F072xB.ld
+@@ -19,14 +19,14 @@
+  */
+ MEMORY
+ {
+-    flash0  : org = 0x08000000, len = 96k
++    flash0  : org = 0x08000000, len = 114k
+     flash1  : org = 0x00000000, len = 0
+     flash2  : org = 0x00000000, len = 0
+     flash3  : org = 0x00000000, len = 0
+     flash4  : org = 0x00000000, len = 0
+     flash5  : org = 0x00000000, len = 0
+     flash6  : org = 0x00000000, len = 0
+-    flash7  : org = 0x08018000, len = 32k
++    flash7  : org = 0x0801C800, len = 14k
+     ram0    : org = 0x20000000, len = 16k
+     ram1    : org = 0x00000000, len = 0
+     ram2    : org = 0x00000000, len = 0

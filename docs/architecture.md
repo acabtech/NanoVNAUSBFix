@@ -107,9 +107,10 @@ sweep buffer is allocated; the encoder reads the existing measurement arrays.
 
 ### Flash budget and optimisation level
 
-The NanoVNA-H linker script gives the application only the first **96 KiB** of
-the F072's 128 KiB flash; the last 32 KiB (`flash7`) is reserved for
-configuration storage. At `-O2` the unofficial image was 97,910 of 98,304 bytes,
+Since FLASH-1 the linker script gives the application **114 KiB** of the F072's
+128 KiB flash for the official flavor (`108 KiB` for the unofficial one); the
+remainder (`flash7`) is reserved for configuration and calibration storage — 14
+KiB official, 20 KiB unofficial. At `-O2` the unofficial image was 97,910 of 98,304 bytes,
 i.e. 394 bytes free, which is not enough for further milestones. The unofficial
 flavor therefore builds with `-Os` (added in `0005-m2-binary-data-transfer.patch`,
 gated on `USBTMC=yes`); the current image is 91,448 bytes and leaves about
@@ -126,10 +127,31 @@ slots form a ping-pong pair: the live record occupies one, the other is the
 erase target for the next write. `cal_collect()` adds one collected array and
 `cal_done()` derives Es/Er/Et point by point, each time rebuilding the record in
 the spare slot and swapping. This needs no RAM staging because the source record
-is only ever read while the destination is erased and programmed. User-visible
-slots are the low three (`CAL_USER_SLOTS`). The record layout is byte-identical
-to the upstream `properties_t` image, so flash slots and SD `.cal` files stay
-compatible with the official firmware.
+is only ever read while the destination is erased and programmed. The record
+layout is byte-identical to the upstream `properties_t` image, so flash slots
+and SD `.cal` files stay compatible with the official firmware.
+
+FLASH-1 (`0016-flash1-unofficial-three-records.patch`) cuts the number of
+user-visible profiles. The unofficial flavor keeps the ping-pong working/scratch
+pair and adds a **single** saved profile in slot 0 (`CAL_USER_SLOTS` = 1), for a
+3-record / 20 KiB reservation. The official flavor uses two plain profiles
+(`SAVEAREA_MAX` = 2) and a 14 KiB reservation via
+`0014-flash1-reduce-cal-slots.patch` and `0015-official-ui-two-slots.patch`.
+
+Save/recall had three defects introduced with RAM-6 and fixed in
+`0016-flash1-unofficial-three-records.patch`: record validation read the
+checksum from the wrong offset (so no saved record was ever accepted), recall
+did not reload the saved header (so only the calibration arrays were restored,
+not the sweep), and the shell usage strings had swapped `printf` arguments. All
+three are verified on hardware.
+
+A two-record in-place design (one user profile plus one working record, edited
+through a 2 KiB page-staging buffer) was prototyped and rejected: `cal_done()`
+must read all five 808-byte error-term arrays to derive Es/Er/Et, and those
+arrays straddle all three record pages. Erasing any page first destroys source
+values needed by a later term, so in-place derivation is impossible without
+about 5 KiB of scratch — more than the free RAM after RAM-6. Ping-pong remains
+the only layout that fits in the available RAM and flash.
 
 ### SCPI state without extra BSS
 

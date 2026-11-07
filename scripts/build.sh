@@ -22,7 +22,11 @@ UPSTREAM_SHA256="3db755b50c84e9c426957882ea9c0c5506febc1310c179a680a1fef9918389e
 
 case "$VARIANT" in
   official)
-    PATCHES=(patches/0001-usb-clock-pclk.patch)
+    PATCHES=(
+      patches/0001-usb-clock-pclk.patch
+      patches/0014-flash1-reduce-cal-slots.patch
+      patches/0015-official-ui-two-slots.patch
+    )
     ARTIFACT="NanoVNA-H-${PROJECT_VERSION}-USB-PCLK"
     MAKE_ARGS=(TARGET=F072)
     ;;
@@ -41,6 +45,7 @@ case "$VARIANT" in
       patches/0011-ram4-trace-index.patch
       patches/0012-ram8-headless.patch
       patches/0013-ram6-flash-backed-cal-data.patch
+      patches/0016-flash1-unofficial-three-records.patch
     )
     ARTIFACT="NanoVNA-H-${PROJECT_VERSION}"
     MAKE_ARGS=(TARGET=F072 USBTMC=yes)

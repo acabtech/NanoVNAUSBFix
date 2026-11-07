@@ -1,0 +1,144 @@
+--- a/hardware.h
++++ b/hardware.h
+@@ -188,7 +188,7 @@
+ 
+ #define FLASH_PAGESIZE 0x800
+ 
+-#define SAVEAREA_MAX 5
++#define SAVEAREA_MAX 3
+ 
+ // Depend from config_t size, should be aligned by FLASH_PAGESIZE
+ #define SAVE_CONFIG_SIZE        0x00000800
+--- a/NANOVNA_STM32_F072/STM32F072xB.ld
++++ b/NANOVNA_STM32_F072/STM32F072xB.ld
+@@ -19,14 +19,14 @@
+  */
+ MEMORY
+ {
+-    flash0  : org = 0x08000000, len = 96k
++    flash0  : org = 0x08000000, len = 108k
+     flash1  : org = 0x00000000, len = 0
+     flash2  : org = 0x00000000, len = 0
+     flash3  : org = 0x00000000, len = 0
+     flash4  : org = 0x00000000, len = 0
+     flash5  : org = 0x00000000, len = 0
+     flash6  : org = 0x00000000, len = 0
+-    flash7  : org = 0x08018000, len = 32k
++    flash7  : org = 0x0801B000, len = 20k
+     ram0    : org = 0x20000000, len = 16k
+     ram1    : org = 0x00000000, len = 0
+     ram2    : org = 0x00000000, len = 0
+--- a/nanovna.h
++++ b/nanovna.h
+@@ -1432,9 +1432,10 @@
+ int caldata_recall(uint32_t id);
+ const properties_t *get_properties(uint32_t id);
+ 
+-// RAM-6: number of user-visible calibration slots. The two highest flash slots
+-// hold the ping-pong working/scratch records and are not offered to the user.
+-#define CAL_USER_SLOTS   3
++// FLASH-1: 1 user-visible calibration slot. Slot 0 holds the saved profile;
++// slots 1 and 2 are the ping-pong working/scratch records and are not offered
++// to the user. Total reservation: 3 records + config = 20 KiB.
++#define CAL_USER_SLOTS   1
+ 
+ // Point-wise transform callback, used by cal_transform_record().
+ typedef void (*cal_point_cb)(int point,
+--- a/data_storage.c
++++ b/data_storage.c
+@@ -51,9 +51,9 @@
+  * avoids needing a 4 KB RAM staging buffer: flash cannot be modified in place
+  * (erase granularity is 2,048 B and the cal arrays are not page-aligned).
+  */
+-#define CAL_USER_SLOTS      3
+-#define CAL_SLOT_WORK       3
+-#define CAL_SLOT_SCRATCH    4
++#define CAL_USER_SLOTS      1
++#define CAL_SLOT_WORK       1
++#define CAL_SLOT_SCRATCH    2
+ 
+ // Type of one calibration array (SWEEP_POINTS_MAX points of 2 floats).
+ typedef const float (*cal_points_t)[2];
+@@ -219,8 +219,12 @@
+   const properties_t *src = cal_slot_hdr(slot);
+   if (checksum_ok & (1 << slot))
+     return true;
++  // The record checksum is stored at PROPS_CHECKSUM_OFFSET. Do not use
++  // `src->checksum`: that field of properties_t sits at offset 208, which in
++  // the flash record is the first 4 bytes of the calibration arrays.
+   if (src->magic != PROPERTIES_MAGIC ||
+-      checksum(src, PROPS_RECORD_SIZE - sizeof(uint32_t)) != src->checksum)
++      checksum(src, PROPS_CHECKSUM_OFFSET) !=
++          *(const uint32_t *)((const uint8_t *)src + PROPS_CHECKSUM_OFFSET))
+     return false;
+   checksum_ok |= 1 << slot;
+   return true;
+@@ -263,6 +267,11 @@
+       cal_clear_record();
+       return 1;
+     }
++    // Load the saved header first: cal_record_write() always programs the
++    // header from `current_props`, so without this the working record would be
++    // rebuilt with the *live* sweep/trace settings and the saved profile's
++    // header would never be restored.
++    memcpy(&current_props, src, PROPS_HEADER_SIZE);
+     // Bring the user slot into the working half of the ping-pong pair.
+     if (cal_record_write(CAL_SLOT_WORK, (int)id, -1, NULL) < 0)
+       return 1;
+--- a/main.c
++++ b/main.c
+@@ -2248,14 +2248,14 @@
+ VNA_SHELL_FUNCTION(cmd_save)
+ {
+   uint32_t id;
+-  // RAM-6: only the low slots are user-visible; the two highest flash slots
+-  // hold the calibration ping-pong records.
++  // FLASH-1: only slot 0 is user-visible; slots 1 and 2 hold the calibration
++  // ping-pong working/scratch records.
+   if (argc == 1 && (id = my_atoui(argv[0])) < CAL_USER_SLOTS) {
+     caldata_save(id);
+     request_to_redraw(REDRAW_CAL_STATUS);
+     return;
+   }
+-  shell_printf("usage: %s 0..%d" VNA_SHELL_NEWLINE_STR, CAL_USER_SLOTS-1, "save");
++  shell_printf("usage: save {id}" VNA_SHELL_NEWLINE_STR "\tid = 0..%d" VNA_SHELL_NEWLINE_STR, CAL_USER_SLOTS-1);
+ }
+ 
+ VNA_SHELL_FUNCTION(cmd_recall)
+@@ -2266,7 +2266,7 @@
+       shell_printf("Err, default load" VNA_SHELL_NEWLINE_STR);
+     return;
+   }
+-  shell_printf("usage: %s 0..%d" VNA_SHELL_NEWLINE_STR, CAL_USER_SLOTS-1, "recall");
++  shell_printf("usage: recall {id}" VNA_SHELL_NEWLINE_STR "\tid = 0..%d" VNA_SHELL_NEWLINE_STR, CAL_USER_SLOTS-1);
+ }
+ 
+ static const char * const trc_channel_name[] = {
+--- a/ui.c
++++ b/ui.c
+@@ -2034,8 +2034,12 @@
+ 
+ const menuitem_t menu_save[] = {
+   { MT_ADV_CALLBACK, 0, "Empty %d", menu_save_acb },//87632
++#if CAL_USER_SLOTS > 1
+   { MT_ADV_CALLBACK, 1, "Empty %d", menu_save_acb },
++#endif
++#if CAL_USER_SLOTS > 2
+   { MT_ADV_CALLBACK, 2, "Empty %d", menu_save_acb },
++#endif
+ #if CAL_USER_SLOTS > 3
+   { MT_ADV_CALLBACK, 3, "Empty %d", menu_save_acb },
+ #endif
+@@ -2056,8 +2060,12 @@
+ 
+ const menuitem_t menu_recall[] = {
+   { MT_ADV_CALLBACK, 0, "Empty %d", menu_recall_acb },
++#if CAL_USER_SLOTS > 1
+   { MT_ADV_CALLBACK, 1, "Empty %d", menu_recall_acb },
++#endif
++#if CAL_USER_SLOTS > 2
+   { MT_ADV_CALLBACK, 2, "Empty %d", menu_recall_acb },
++#endif
+ #if CAL_USER_SLOTS > 3
+   { MT_ADV_CALLBACK, 3, "Empty %d", menu_recall_acb },
+ #endif

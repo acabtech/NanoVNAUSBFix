@@ -11,6 +11,37 @@ Work in progress; entries are added as milestones land.
 
 ### Added
 
+- FLASH-1 calibration-slot reduction, applied to **both** flavors. Calibration
+  config storage no longer reserves 32 KiB:
+  - Official: `0014-flash1-reduce-cal-slots.patch` sets `SAVEAREA_MAX` to **2**
+    and moves the F072 split to `flash0 114k` / `flash7 0x0801C800 + 14k`
+    (2 KiB `config_t` + 2 × 6 KiB records). `0015-official-ui-two-slots.patch`
+    gates the third save/recall menu entry on `SAVEAREA_MAX > 2`, so the UI
+    offers exactly two profiles. The application region grows from 96 KiB to
+    114 KiB; because the cal addresses are computed backwards from the end of
+    flash, previously stored calibrations are invalidated.
+  - Unofficial: `0016-flash1-unofficial-three-records.patch` keeps RAM-6's
+    ping-pong working/scratch records and adds a **single** user-visible profile
+    (`CAL_USER_SLOTS` 3 → **1**), for `SAVEAREA_MAX` **3** and a 20 KiB
+    reservation (`flash0 108k`, `flash7 0x0801B000 + 20k`). The shell
+    `save`/`recall` bounds, UI menus and the backup-slot check all follow
+    `CAL_USER_SLOTS`. A 2-slot in-place design (one profile plus one working
+    record with a 2 KiB page-staging buffer) was rejected: see
+    [`docs/architecture.md`](docs/architecture.md) for why `cal_done()` cannot
+    compute the error terms in place.
+  Free RAM is unchanged for the unofficial flavor at **4,776 B** (the ping-pong
+  records stay on flash); official RAM is unchanged.
+- Fixed three RAM-6 calibration defects in
+  `0016-flash1-unofficial-three-records.patch`, all found by testing on hardware:
+  `cal_record_valid()` read the checksum from `properties_t.checksum` (offset
+  208, the first calibration value in the flash record) instead of
+  `PROPS_CHECKSUM_OFFSET`, so no saved record validated and `recall` always fell
+  back to defaults; `caldata_recall()` did not reload the saved header before
+  rebuilding the working record, so sweep/trace settings were never restored;
+  and the `save`/`recall` usage messages passed `%s` and `%d` in the wrong
+  order, printing `(null) 0..134292061`. Verified on hardware: sweep round-trip,
+  a full calibration surviving `save` -> `cal reset` -> `recall`, and
+  persistence across a reboot.
 - RAM-6 flash-backed calibration (`0013-ram6-flash-backed-cal-data.patch`):
   the 4,040-byte `_cal_data` array no longer lives in RAM. It is read from a
   pair of ping-pong flash calibration records through a `cal_data` pointer, and

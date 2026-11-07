@@ -1,0 +1,22 @@
+--- a/ui.c
++++ b/ui.c
+@@ -1998,7 +1998,9 @@
+ const menuitem_t menu_save[] = {
+   { MT_ADV_CALLBACK, 0, "Empty %d", menu_save_acb },//87632
+   { MT_ADV_CALLBACK, 1, "Empty %d", menu_save_acb },
++#if SAVEAREA_MAX > 2
+   { MT_ADV_CALLBACK, 2, "Empty %d", menu_save_acb },
++#endif
+ #if SAVEAREA_MAX > 3
+   { MT_ADV_CALLBACK, 3, "Empty %d", menu_save_acb },
+ #endif
+@@ -2020,7 +2022,9 @@
+ const menuitem_t menu_recall[] = {
+   { MT_ADV_CALLBACK, 0, "Empty %d", menu_recall_acb },
+   { MT_ADV_CALLBACK, 1, "Empty %d", menu_recall_acb },
++#if SAVEAREA_MAX > 2
+   { MT_ADV_CALLBACK, 2, "Empty %d", menu_recall_acb },
++#endif
+ #if SAVEAREA_MAX > 3
+   { MT_ADV_CALLBACK, 3, "Empty %d", menu_recall_acb },
+ #endif
