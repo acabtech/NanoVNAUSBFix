@@ -11,6 +11,18 @@ Work in progress; entries are added as milestones land.
 
 ### Added
 
+- RAM-6 flash-backed calibration (`0013-ram6-flash-backed-cal-data.patch`):
+  the 4,040-byte `_cal_data` array no longer lives in RAM. It is read from a
+  pair of ping-pong flash calibration records through a `cal_data` pointer, and
+  `cal_collect()` / `cal_done()` rebuild the live record into the spare slot one
+  point at a time, so no 4 KB staging buffer is required. `properties_t` shrinks
+  from 4,252 to 212 bytes and free RAM rises from 820 to **4,776 B**
+  (`_bss_end` `0x20003ccc` -> `0x20002d58`). The two highest flash slots are now
+  the working/scratch pair, so **user-visible calibration slots drop from 5 to
+  3**; the shell `save`/`recall` range, the UI menus and the backup-slot bound
+  all use `CAL_USER_SLOTS`. The on-flash and SD `.cal` record layout is
+  byte-for-byte the upstream `properties_t` image, so calibrations remain
+  interchangeable with the official firmware.
 - RAM-8 headless mode (`0012-ram8-headless.patch`): `headless on|off` skips
   `ui_process()`, the trace-index cache and cell rendering, paints a notice
   screen, and blinks the green LED at 1 Hz. It is also reachable from

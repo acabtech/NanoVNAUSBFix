@@ -1,0 +1,869 @@
+diff -ruN a/data_storage.c b/data_storage.c
+--- a/data_storage.c
++++ b/data_storage.c
+@@ -35,6 +35,59 @@
+   return SAVE_PROP_CONFIG_ADDR + id * SAVE_PROP_CONFIG_SIZE;
+ }
+ 
++/*
++ * RAM-6: calibration storage.
++ *
++ * `_cal_data` (5 x 101 x 2 floats = 4,040 B) no longer lives in the RAM copy of
++ * `properties_t`; it lives in the calibration record on flash and is read
++ * through the `cal_data` pointer. The flash record keeps the exact byte layout
++ * of the upstream struct, so records remain interchangeable with the official
++ * firmware and with SD `.cal` files.
++ *
++ * Slots 0..CAL_USER_SLOTS-1 are user-visible. The two highest slots are a
++ * ping-pong pair: one holds the live working record, the other is the erase
++ * target for the next write. Calibration edits are built into the free slot
++ * while the working slot is still readable, then the roles swap. This is what
++ * avoids needing a 4 KB RAM staging buffer: flash cannot be modified in place
++ * (erase granularity is 2,048 B and the cal arrays are not page-aligned).
++ */
++#define CAL_USER_SLOTS      3
++#define CAL_SLOT_WORK       3
++#define CAL_SLOT_SCRATCH    4
++
++// Type of one calibration array (SWEEP_POINTS_MAX points of 2 floats).
++typedef const float (*cal_points_t)[2];
++
++// Point-wise transform callback: fill `out` with the five error terms for one
++// sweep point, reading that point from `src[type][0..1]`.
++typedef void (*cal_point_cb)(int point,
++                             float out[CAL_TYPE_COUNT][2],
++                             const float *src);
++
++// CAL_SLOT_POINTS_ADDR() is defined in nanovna.h.
++
++// The live calibration array. Statically initialised to the working slot so it
++// is valid from the first instruction, before any init function runs.
++float (*cal_data)[SWEEP_POINTS_MAX][2] =
++    (float (*)[SWEEP_POINTS_MAX][2])CAL_SLOT_POINTS_ADDR(CAL_SLOT_WORK);
++
++static int cal_active_slot = CAL_SLOT_WORK;
++static int cal_free_slot   = CAL_SLOT_SCRATCH;
++
++static inline properties_t *cal_slot_hdr(int slot) {
++  return (properties_t *)calibration_slot_area(slot);
++}
++
++static inline cal_points_t cal_slot_points(int slot, int type) {
++  return (cal_points_t)(calibration_slot_area(slot) + PROPS_CAL_OFFSET +
++                        (uint32_t)type * (uint32_t)(PROPS_CAL_SIZE / CAL_TYPE_COUNT));
++}
++
++static inline void cal_use_slot(int slot) {
++  cal_active_slot = slot;
++  cal_data = (float (*)[SWEEP_POINTS_MAX][2])cal_slot_points(slot, 0);
++}
++
+ static uint32_t checksum(const void *start, size_t len) {
+   uint32_t *p = (uint32_t*)start;
+   uint32_t value = 0;
+@@ -65,50 +118,281 @@
+   return 0;
+ }
+ 
++// Program `size` bytes into an already-erased destination. Returns 0 on
++// success, -1 if a destination half-word was not blank.
++static int flash_program_noerase(uint32_t dst, const void *data, uint32_t size)
++{
++  const uint16_t *src = (const uint16_t *)data;
++  uint32_t i;
++  for (i = 0; i < size / sizeof(uint16_t); i++)
++    if (flash_program_half_word_noerase((uint16_t *)(dst + i * 2), src[i]) < 0)
++      return -1;
++  return 0;
++}
++
++/*
++ * Point-wise record transform.
++ *
++ * `cb(point, out, src)` fills `out` with the five error-term values for one
++ * sweep point, reading the same point from `src` (the source slot's arrays).
++ * The record header in `current_props` is written unchanged.
++ *
++ * Writing one point at a time keeps the RAM cost at 40 bytes regardless of
++ * SWEEP_POINTS_MAX, which is what allows `cal_done()` to derive ES/ER/ET
++ * without a second 4 KB array.
++ */
++static int cal_record_transform(int dst_slot, int src_slot, cal_point_cb cb)
++{
++  const uint32_t dst = calibration_slot_area(dst_slot);
++  const uint32_t src = calibration_slot_area(src_slot);
++  const uint32_t type_size = PROPS_CAL_SIZE / CAL_TYPE_COUNT;
++  const uint32_t point_size = type_size / SWEEP_POINTS_MAX;
++  int i, t;
++
++  flash_erase_pages(dst, PROPS_RECORD_SIZE);
++  if (flash_program_noerase(dst, &current_props, PROPS_HEADER_SIZE) < 0)
++    return -1;
++
++  for (i = 0; i < SWEEP_POINTS_MAX; i++) {
++    float out[CAL_TYPE_COUNT][2];
++    cb(i, out, (const float *)(src + PROPS_CAL_OFFSET));
++    for (t = 0; t < CAL_TYPE_COUNT; t++) {
++      const uint32_t off = dst + PROPS_CAL_OFFSET +
++                           (uint32_t)t * type_size + (uint32_t)i * point_size;
++      if (flash_program_noerase(off, out[t], sizeof(out[t])) < 0)
++        return -1;
++    }
++  }
++
++  {
++    uint32_t sum = checksum((const void *)dst, PROPS_RECORD_SIZE - sizeof(uint32_t));
++    if (flash_program_noerase(dst + PROPS_CHECKSUM_OFFSET, &sum, sizeof(sum)) < 0)
++      return -1;
++  }
++  return 0;
++}
++
++/*
++ * Build a complete calibration record in `dst_slot` from the header in
++ * `current_props` and the arrays of `src_slot`. When `patch_type` is a valid
++ * calibration index, that one array is taken from `patch` instead of the
++ * source slot; all other arrays are copied from `src_slot`.
++ *
++ * The source slot is only ever read, so this can run while the destination
++ * pages are being erased and programmed. No RAM staging buffer is needed.
++ */
++static int cal_record_write(int dst_slot, int src_slot, int patch_type, const float *patch)
++{
++  const uint32_t dst = calibration_slot_area(dst_slot);
++  const uint32_t src = calibration_slot_area(src_slot);
++  const uint32_t type_size = PROPS_CAL_SIZE / CAL_TYPE_COUNT;
++  int t;
++
++  // Erase the destination pages, then program the header.
++  flash_erase_pages(dst, PROPS_RECORD_SIZE);
++  if (flash_program_noerase(dst, &current_props, PROPS_HEADER_SIZE) < 0)
++    return -1;
++
++  // Program the five calibration arrays.
++  for (t = 0; t < CAL_TYPE_COUNT; t++) {
++    const uint32_t off = PROPS_CAL_OFFSET + (uint32_t)t * type_size;
++    if (t == patch_type) {
++      if (flash_program_noerase(dst + off, patch, type_size) < 0)
++        return -1;
++    } else {
++      if (flash_program_noerase(dst + off, (const void *)(src + off), type_size) < 0)
++        return -1;
++    }
++  }
++
++  // Checksum covers the header and the arrays, read back from flash.
++  uint32_t sum = checksum((const void *)dst, PROPS_RECORD_SIZE - sizeof(uint32_t));
++  if (flash_program_noerase(dst + PROPS_CHECKSUM_OFFSET, &sum, sizeof(sum)) < 0)
++    return -1;
++
++  return 0;
++}
++
++// Validate a slot's magic and checksum. Results are cached per slot.
++static bool cal_record_valid(int slot)
++{
++  const properties_t *src = cal_slot_hdr(slot);
++  if (checksum_ok & (1 << slot))
++    return true;
++  if (src->magic != PROPERTIES_MAGIC ||
++      checksum(src, PROPS_RECORD_SIZE - sizeof(uint32_t)) != src->checksum)
++    return false;
++  checksum_ok |= 1 << slot;
++  return true;
++}
++
+ int caldata_save(uint32_t id) {
+-  if (id >= SAVEAREA_MAX)
++  if (id >= CAL_USER_SLOTS)
+     return -1;
+ 
+-  // Apply magic word and calculate checksum
+   current_props.magic = PROPERTIES_MAGIC;
+-  current_props.checksum = checksum(&current_props, sizeof current_props - sizeof current_props.checksum);
+-
+-  // write to flash
+-  uint16_t *dst = (uint16_t*)calibration_slot_area(id);
+-  flash_program_half_word_buffer(dst, (uint16_t*)&current_props, sizeof(properties_t));
++  // Copy the live working record into the user slot, arrays included.
++  if (cal_record_write((int)id, cal_active_slot, -1, NULL) < 0)
++    return -1;
+ 
++  checksum_ok &= ~(1 << id);
+   lastsaveid = id;
+   return 0;
+ }
+ 
+ const properties_t * get_properties(uint32_t id) {
+-  if (id >= SAVEAREA_MAX)
++  if (id >= CAL_USER_SLOTS && id != CAL_SLOT_WORK && id != CAL_SLOT_SCRATCH)
+     return NULL;
+-  // point to saved area on the flash memory
+-  properties_t *src = (properties_t*)calibration_slot_area(id);
+-  // Check crc cache mask (made it only 1 time)
+-  if (checksum_ok&(1<<id))
+-    return src;
+-  if (src->magic != PROPERTIES_MAGIC || checksum(src, sizeof *src - sizeof src->checksum) != src->checksum)
++  if (!cal_record_valid((int)id))
+     return NULL;
+-  checksum_ok|=1<<id;
+-  return src;
++  return cal_slot_hdr((int)id);
+ }
+ 
+ int caldata_recall(uint32_t id) {
+   lastsaveid = NO_SAVE_SLOT;
+   if (id == NO_SAVE_SLOT)
+     return 0;
+-  // point to saved area on the flash memory
+-  const properties_t *src = get_properties(id);
+-  if (src == NULL){
+-//  load_default_properties();
+-    return 1;
++
++  // A record copied from the working slot (SD load, or an in-progress
++  // calibration) is always valid; only user slots carry a magic/checksum.
++  if (id != CAL_SLOT_WORK && id != CAL_SLOT_SCRATCH) {
++    const properties_t *src = get_properties(id);
++    if (src == NULL) {
++      // No saved calibration: zero the working record so `cal_data` never
++      // exposes erased-flash values (the previous RAM array was zero-initialised).
++      cal_clear_record();
++      return 1;
++    }
++    // Bring the user slot into the working half of the ping-pong pair.
++    if (cal_record_write(CAL_SLOT_WORK, (int)id, -1, NULL) < 0)
++      return 1;
+   }
+-  // active configuration points to save data on flash memory
++  cal_use_slot(CAL_SLOT_WORK);
++  memcpy(&current_props, cal_slot_hdr(CAL_SLOT_WORK), PROPS_HEADER_SIZE);
+   lastsaveid = id;
+-  // duplicated saved data onto sram to be able to modify marker/trace
+-  memcpy(&current_props, src, sizeof(properties_t));
++  return 0;
++}
++
++/*
++ * RAM-6 calibration-session API, used by main.c.
++ *
++ * Both calls leave the result in the working slot and point `cal_data` at it.
++ */
++int cal_store_array(int type, const void *array)
++{
++  if (type < 0 || type >= CAL_TYPE_COUNT)
++    return -1;
++  current_props.magic = PROPERTIES_MAGIC;
++  if (cal_record_write(cal_free_slot, cal_active_slot, type,
++                       (const float *)array) < 0)
++    return -1;
++  // Swap: the freshly written record becomes the live one.
++  {
++    int tmp = cal_active_slot;
++    cal_active_slot = cal_free_slot;
++    cal_free_slot = tmp;
++  }
++  cal_use_slot(cal_active_slot);
++  checksum_ok &= ~(1 << cal_active_slot);
++  return 0;
++}
++
++int cal_write_live_record(void)
++{
++  current_props.magic = PROPERTIES_MAGIC;
++  if (cal_record_write(cal_free_slot, cal_active_slot, -1, NULL) < 0)
++    return -1;
++  {
++    int tmp = cal_active_slot;
++    cal_active_slot = cal_free_slot;
++    cal_free_slot = tmp;
++  }
++  cal_use_slot(cal_active_slot);
++  checksum_ok &= ~(1 << cal_active_slot);
++  return 0;
++}
++
++int cal_active_slot_index(void) { return cal_active_slot; }
++
++/*
++ * RAM-6: build the live record from an external record image (SD `.cal` load).
++ *
++ * `read(buf, len)` must return 0 on success. The header is taken from
++ * `current_props`; only the calibration arrays are read from the source. Data
++ * is streamed through a small stack buffer so no 4 KB staging is required.
++ */
++int cal_record_read_arrays(int (*read_fn)(void *buf, uint32_t len))
++{
++  // Static 64-byte chunk: the sweep thread has only ~136 B of stack margin, so
++  // a 256-byte local frame would overflow it.
++  static uint16_t chunk[32];
++  const uint32_t dst = calibration_slot_area(cal_free_slot);
++  const uint32_t chunk_size = sizeof(chunk);
++  uint32_t remaining = PROPS_CAL_SIZE;
++
++  current_props.magic = PROPERTIES_MAGIC;
++  flash_erase_pages(dst, PROPS_RECORD_SIZE);
++  if (flash_program_noerase(dst, &current_props, PROPS_HEADER_SIZE) < 0)
++    return -1;
++
++  while (remaining > 0) {
++    uint32_t n = remaining < chunk_size ? remaining : chunk_size;
++    uint32_t off = PROPS_CAL_OFFSET + (PROPS_CAL_SIZE - remaining);
++    if (read_fn(chunk, n) != 0)
++      return -1;
++    if (flash_program_noerase(dst + off, chunk, n) < 0)
++      return -1;
++    remaining -= n;
++  }
++
++  {
++    uint32_t sum = checksum((const void *)dst, PROPS_RECORD_SIZE - sizeof(uint32_t));
++    if (flash_program_noerase(dst + PROPS_CHECKSUM_OFFSET, &sum, sizeof(sum)) < 0)
++      return -1;
++  }
++
++  // Commit: the freshly written record becomes live.
++  {
++    int tmp = cal_active_slot;
++    cal_active_slot = cal_free_slot;
++    cal_free_slot = tmp;
++  }
++  cal_use_slot(cal_active_slot);
++  checksum_ok &= ~(1 << cal_active_slot);
++  return 0;
++}
++
++// Fill one point with zeros; used to reset the record when no calibration
++// exists so `cal_data` never exposes erased-flash values.
++static void cal_zero_point(int point, float out[CAL_TYPE_COUNT][2], const float *src)
++{
++  int t;
++  (void)point;
++  (void)src;
++  for (t = 0; t < CAL_TYPE_COUNT; t++)
++    out[t][0] = out[t][1] = 0.0f;
++}
++
++/*
++ * Replace the live record's arrays with all zeros.
++ */
++int cal_clear_record(void)
++{
++  return cal_transform_record(cal_zero_point);
++}
++
++int cal_transform_record(cal_point_cb cb)
++{
++  current_props.magic = PROPERTIES_MAGIC;
++  if (cal_record_transform(cal_free_slot, cal_active_slot, cb) < 0)
++    return -1;
++  {
++    int tmp = cal_active_slot;
++    cal_active_slot = cal_free_slot;
++    cal_free_slot = tmp;
++  }
++  cal_use_slot(cal_active_slot);
++  checksum_ok &= ~(1 << cal_active_slot);
+   return 0;
+ }
+ 
+@@ -117,5 +401,8 @@
+   checksum_ok = 0;
+   // unlock and erase flash pages
+   flash_erase_pages(SAVE_PROP_CONFIG_ADDR, SAVE_FULL_AREA_SIZE);
++  cal_active_slot = CAL_SLOT_WORK;
++  cal_free_slot   = CAL_SLOT_SCRATCH;
++  cal_use_slot(CAL_SLOT_WORK);
+ }
+ 
+diff -ruN a/hardware.h b/hardware.h
+--- a/hardware.h
++++ b/hardware.h
+@@ -208,6 +208,9 @@
+ void flash_erase_pages(uint32_t page_address, uint32_t size);
+ // Write data
+ void flash_program_half_word_buffer(uint16_t* dst, uint16_t *data, uint16_t size);
++// RAM-6: program one half-word into already-erased flash (no erase).
++// Returns 0 on success, -1 if the destination half-word is not blank.
++int flash_program_half_word_noerase(uint16_t *dst, uint16_t value);
+ 
+ /*
+  * gpio.c
+diff -ruN a/main.c b/main.c
+--- a/main.c
++++ b/main.c
+@@ -1101,7 +1101,7 @@
+   if (config_recall() == 0 && VNA_MODE(VNA_MODE_BACKUP)) {       // Config loaded ok and need restore backup if enabled
+     backup_0 bk = {.v = get_backup_data32(0)};
+     if (bk.v != 0) {                                             // if backup data valid
+-      if (bk.id < SAVEAREA_MAX && caldata_recall(bk.id) == 0) {  // Slot valid and Load ok
++      if (bk.id < CAL_USER_SLOTS && caldata_recall(bk.id) == 0) {  // Slot valid and Load ok
+         sweep_points = bk.points;                                // Restore settings depend from calibration data
+         frequency0 = get_backup_data32(1);
+         frequency1 = get_backup_data32(2);
+@@ -1761,6 +1761,7 @@
+                "\tsweep {%s} {freq(Hz)}" VNA_SHELL_NEWLINE_STR, sweep_cmd);
+ }
+ 
++#if 0  /* RAM-6: replaced by cal_done_point(), which writes straight to flash. */
+ static void
+ eterm_set(int term, float re, float im)
+ {
+@@ -1862,6 +1863,105 @@
+   cal_status &= ~CALSTAT_THRU;
+   cal_status |= CALSTAT_ET;
+ }
++#endif /* RAM-6: legacy in-RAM eterm builders */
++
++/*
++ * RAM-6: per-point reconstruction of the error terms.
++ *
++ * `src` points at the first array of the live flash record, so src[t][0..1] is
++ * the value of error term `t` at `point`. `out` receives the new record. This
++ * mirrors cal_done()'s sequence of set/copy/calc steps, evaluated for a single
++ * point so nothing has to be staged in RAM.
++ */
++static void cal_done_point(int point, float out[CAL_TYPE_COUNT][2], const float *src)
++{
++  const int has_load  = current_props._cal_status & CALSTAT_LOAD;
++  const int has_open  = current_props._cal_status & CALSTAT_OPEN;
++  const int has_short = current_props._cal_status & CALSTAT_SHORT;
++  const int has_thru  = current_props._cal_status & CALSTAT_THRU;
++  const int has_isoln = current_props._cal_status & CALSTAT_ISOLN;
++
++  // Points beyond the calibration sweep keep their previous values; upstream
++  // only rewrites 0..sweep_points-1 and leaves the tail untouched.
++  if (point >= (int)current_props._cal_sweep_points) {
++    int t;
++    for (t = 0; t < CAL_TYPE_COUNT; t++) {
++      out[t][0] = src[t * SWEEP_POINTS_MAX * 2 + point * 2 + 0];
++      out[t][1] = src[t * SWEEP_POINTS_MAX * 2 + point * 2 + 1];
++    }
++    return;
++  }
++
++  // Inputs, indexed by error-term/cal-type number.
++  float ed_r = has_load  ? src[ETERM_ED * SWEEP_POINTS_MAX * 2 + point * 2 + 0] : 0.0f;
++  float ed_i = has_load  ? src[ETERM_ED * SWEEP_POINTS_MAX * 2 + point * 2 + 1] : 0.0f;
++  float op_r = src[CAL_OPEN  * SWEEP_POINTS_MAX * 2 + point * 2 + 0];
++  float op_i = src[CAL_OPEN  * SWEEP_POINTS_MAX * 2 + point * 2 + 1];
++  float sh_r = src[CAL_SHORT * SWEEP_POINTS_MAX * 2 + point * 2 + 0];
++  float sh_i = src[CAL_SHORT * SWEEP_POINTS_MAX * 2 + point * 2 + 1];
++  float th_r = src[CAL_THRU  * SWEEP_POINTS_MAX * 2 + point * 2 + 0];
++  float th_i = src[CAL_THRU  * SWEEP_POINTS_MAX * 2 + point * 2 + 1];
++  float is_r = has_isoln ? src[CAL_ISOLN * SWEEP_POINTS_MAX * 2 + point * 2 + 0] : 0.0f;
++  float is_i = has_isoln ? src[CAL_ISOLN * SWEEP_POINTS_MAX * 2 + point * 2 + 1] : 0.0f;
++
++  float es_r = 0.0f, es_i = 0.0f, er_r = 1.0f, er_i = 0.0f;
++  float et_r = 1.0f, et_i = 0.0f;
++
++  if (has_short && has_open) {
++    // Es = (S11mo' + S11ms') / (S11mo' - S11ms'), with S11a=1.
++    float s11or = op_r - ed_r, s11oi = op_i - ed_i;
++    float s11sr = sh_r - ed_r, s11si = sh_i - ed_i;
++    float denomr = s11or - s11sr;
++    float denomi = s11oi - s11si;
++    float d = denomr * denomr + denomi * denomi;
++    float numr = s11sr + s11or;
++    float numi = s11si + s11oi;
++    es_r = (numr * denomr + numi * denomi) / d;
++    es_i = (numi * denomr - numr * denomi) / d;
++    // Er = (1 + Es) S11ms'
++    {
++      float k_r = 1.0f + es_r, k_i = es_i;
++      er_r = -(k_r * s11sr - k_i * s11si);
++      er_i = -(k_r * s11si + k_i * s11sr);
++    }
++  } else if (has_open) {
++    // Short not measured: assume S11ms' = S11mo' (eterm_copy(CAL_SHORT, CAL_OPEN)).
++    float s11sr = op_r - ed_r, s11si = op_i - ed_i;
++    float k_r = 1.0f, k_i = 0.0f;   // Es = 0
++    er_r = k_r * s11sr - k_i * s11si;
++    er_i = k_r * s11si + k_i * s11sr;
++    es_r = es_i = 0.0f;
++  } else if (has_short) {
++    // Open not measured: Es = 0, then eterm_calc_er(-1) negates the result.
++    er_r = -(sh_r - ed_r);
++    er_i = -(sh_i - ed_i);
++    es_r = es_i = 0.0f;
++  } else {
++    es_r = es_i = 0.0f;
++    er_r = 1.0f;
++    er_i = 0.0f;
++  }
++
++  if (has_thru) {
++    // Et is stored inverted for efficiency: Et = 1 / (S21mt - Ex).
++    float etr = th_r - is_r;
++    float eti = th_i - is_i;
++    float sq = etr * etr + eti * eti;
++    et_r =  etr / sq;
++    et_i = -eti / sq;
++  }
++
++  out[ETERM_ED][0] = ed_r;
++  out[ETERM_ED][1] = ed_i;
++  out[ETERM_ES][0] = es_r;
++  out[ETERM_ES][1] = es_i;
++  out[ETERM_ER][0] = er_r;
++  out[ETERM_ER][1] = er_i;
++  out[ETERM_ET][0] = et_r;
++  out[ETERM_ET][1] = et_i;
++  out[ETERM_EX][0] = is_r;
++  out[ETERM_EX][1] = is_i;
++}
+ 
+ #if 0
+ void apply_error_term(void)
+@@ -2012,25 +2112,10 @@
+ //  if (electrical_delayS21) mask|= SWEEP_APPLY_EDELAY_S21;
+   // Measure calibration data
+   sweep(false, mask);
+-  // Copy calibration data
+-  memcpy(cal_data[dst], measured[src], sizeof measured[0]);
+-
+-  // Made average if need
+-  int count = 1, i, j;
+-  for (i = 1; i < count; i ++){
+-    sweep(false, (src == 0) ? SWEEP_CH0_MEASURE : SWEEP_CH1_MEASURE);
+-    for (j = 0; j < sweep_points; j++){
+-      cal_data[dst][j][0]+=measured[src][j][0];
+-      cal_data[dst][j][1]+=measured[src][j][1];
+-    }
+-  }
+-  if (i != 1){
+-    float k = 1.0f / i;
+-    for (j = 0; j < sweep_points; j++){
+-      cal_data[dst][j][0]*= k;
+-      cal_data[dst][j][1]*= k;
+-    }
+-  }
++  // RAM-6: write the collected channel straight into the flash record. The
++  // averaging loop that used to follow was dead code (count == 1), so the one
++  // measured channel is the complete array for this standard.
++  cal_store_array(dst, measured[src]);
+ 
+   config._bandwidth = bw;          // restore
+   request_to_redraw(REDRAW_CAL_STATUS);
+@@ -2039,38 +2124,15 @@
+ void
+ cal_done(void)
+ {
+-  // Set Load/Ed to default if not calculated
+-  if (!(cal_status & CALSTAT_LOAD))
+-    eterm_set(ETERM_ED, 0.0, 0.0);
+-  // Set Isoln/Ex to default if not measured
+-  if (!(cal_status & CALSTAT_ISOLN))
+-    eterm_set(ETERM_EX, 0.0, 0.0);
+-
+-  // Precalculate Es and Er from Short and Open (and use Load/Ed data)
+-  if ((cal_status & CALSTAT_SHORT) && (cal_status & CALSTAT_OPEN)) {
+-    eterm_calc_es();
+-    eterm_calc_er(-1);
+-  } else if (cal_status & CALSTAT_OPEN) {
+-    eterm_copy(CAL_SHORT, CAL_OPEN);
+-    cal_status &=~ CALSTAT_OPEN;
+-    eterm_set(ETERM_ES, 0.0, 0.0);
+-    eterm_calc_er(1);
+-  } else if (cal_status & CALSTAT_SHORT) {
+-    eterm_set(ETERM_ES, 0.0, 0.0);
+-    eterm_calc_er(-1);
+-  }
+-
+-  // Apply Et
+-  if (cal_status & CALSTAT_THRU)
+-    eterm_calc_et();
+-
+-  // Set other fields to default if not set
+-  if (!(cal_status & CALSTAT_ET))
+-    eterm_set(ETERM_ET, 1.0, 0.0);
+-  if (!(cal_status & CALSTAT_ER))
+-    eterm_set(ETERM_ER, 1.0, 0.0);
+-  if (!(cal_status & CALSTAT_ES))
+-    eterm_set(ETERM_ES, 0.0, 0.0);
++  // RAM-6: derive Ed/Es/Er/Et/Ex from the collected arrays and rewrite the
++  // flash record one point at a time. cal_done_point() reproduces the previous
++  // in-place sequence, so the numeric result is unchanged.
++  // The transform reads the original CALSTAT_* flags, so the OPEN-only
++  // CALSTAT_OPEN clear happens afterwards, as upstream did.
++  cal_transform_record(cal_done_point);
++
++  if ((cal_status & CALSTAT_OPEN) && !(cal_status & CALSTAT_SHORT))
++    cal_status &= ~CALSTAT_OPEN;
+ 
+   cal_status|= CALSTAT_APPLY;
+   lastsaveid = NO_SAVE_SLOT;
+@@ -2186,23 +2248,25 @@
+ VNA_SHELL_FUNCTION(cmd_save)
+ {
+   uint32_t id;
+-  if (argc == 1 && (id = my_atoui(argv[0])) < SAVEAREA_MAX) {
++  // RAM-6: only the low slots are user-visible; the two highest flash slots
++  // hold the calibration ping-pong records.
++  if (argc == 1 && (id = my_atoui(argv[0])) < CAL_USER_SLOTS) {
+     caldata_save(id);
+     request_to_redraw(REDRAW_CAL_STATUS);
+     return;
+   }
+-  shell_printf("usage: %s 0..%d" VNA_SHELL_NEWLINE_STR, SAVEAREA_MAX-1, "save");
++  shell_printf("usage: %s 0..%d" VNA_SHELL_NEWLINE_STR, CAL_USER_SLOTS-1, "save");
+ }
+ 
+ VNA_SHELL_FUNCTION(cmd_recall)
+ {
+   uint32_t id;
+-  if (argc == 1 && (id = my_atoui(argv[0])) < SAVEAREA_MAX) {
++  if (argc == 1 && (id = my_atoui(argv[0])) < CAL_USER_SLOTS) {
+     if (load_properties(id))  // Check for success
+       shell_printf("Err, default load" VNA_SHELL_NEWLINE_STR);
+     return;
+   }
+-  shell_printf("usage: %s 0..%d" VNA_SHELL_NEWLINE_STR, SAVEAREA_MAX-1, "recall");
++  shell_printf("usage: %s 0..%d" VNA_SHELL_NEWLINE_STR, CAL_USER_SLOTS-1, "recall");
+ }
+ 
+ static const char * const trc_channel_name[] = {
+diff -ruN a/nanovna.h b/nanovna.h
+--- a/nanovna.h
++++ b/nanovna.h
+@@ -315,6 +315,15 @@
+ #define ETERM_ET 3 /* error term transmission tracking */
+ #define ETERM_EX 4 /* error term isolation */
+ 
++// RAM-6: calibration record layout, both on flash and in an SD `.cal` file.
++// The byte order matches the upstream `properties_t` image exactly, so records
++// written by the official firmware stay readable and vice versa.
++#define PROPS_HEADER_SIZE     208
++#define PROPS_CAL_OFFSET      PROPS_HEADER_SIZE
++#define PROPS_CAL_SIZE        (CAL_TYPE_COUNT * SWEEP_POINTS_MAX * 2 * (int)sizeof(float))
++#define PROPS_CHECKSUM_OFFSET (PROPS_CAL_OFFSET + PROPS_CAL_SIZE)
++#define PROPS_RECORD_SIZE     (PROPS_CHECKSUM_OFFSET + (int)sizeof(uint32_t))
++
+ #if   SWEEP_POINTS_MAX <= 256
+ #define FFT_SIZE   256
+ #elif SWEEP_POINTS_MAX <= 512
+@@ -1053,13 +1062,27 @@
+   float    _portz;               // Used for port-z renormalization
+   float    _cal_load_r;          // Used as calibration standard LOAD R value (calculated in renormalization procedure)
+   uint32_t _reserved1[7];
+-  float    _cal_data[CAL_TYPE_COUNT][SWEEP_POINTS_MAX][2]; // Put at the end for faster access to others data from struct
++  // RAM-6: the calibration array is no longer part of this RAM-resident
++  // struct. It lives in a flash record (see PROPS_* below) and is accessed
++  // through the `cal_data` pointer.
+   uint32_t checksum;
+ } properties_t;
+ 
++// RAM-6: the in-RAM header is everything that the firmware mutates during
++// normal operation (sweep, trace and marker state). The 4,040 B calibration
++// array is kept on flash and reached through `cal_data`.
++_Static_assert(offsetof(properties_t, checksum) == 208,
++               "properties_t header must stay 208 bytes to match the flash record");
++_Static_assert(sizeof(properties_t) == 212,
++               "properties_t (header + checksum) must be 212 bytes");
++
+ extern config_t config;
+ extern properties_t current_props;
+ 
++// Points at the `_cal_data` region of the active flash record. Always a valid,
++// readable address inside the calibration area; never NULL.
++extern float (*cal_data)[SWEEP_POINTS_MAX][2];
++
+ void set_trace_type(int t, int type, int channel);
+ void set_trace_channel(int t, int channel);
+ void set_trace_scale(int t, float scale);
+@@ -1353,7 +1376,8 @@
+ #define cal_sweep_points    current_props._cal_sweep_points
+ #define cal_power           current_props._cal_power
+ #define cal_status          current_props._cal_status
+-#define cal_data            current_props._cal_data
++// RAM-6: `cal_data` is now the global flash-backed pointer declared above,
++// not a macro into a RAM struct member.
+ #define electrical_delayS11 current_props._electrical_delay[0]
+ #define electrical_delayS21 current_props._electrical_delay[1]
+ #define s21_offset          current_props._s21_offset
+@@ -1408,6 +1432,30 @@
+ int caldata_recall(uint32_t id);
+ const properties_t *get_properties(uint32_t id);
+ 
++// RAM-6: number of user-visible calibration slots. The two highest flash slots
++// hold the ping-pong working/scratch records and are not offered to the user.
++#define CAL_USER_SLOTS   3
++
++// Point-wise transform callback, used by cal_transform_record().
++typedef void (*cal_point_cb)(int point,
++                             float out[CAL_TYPE_COUNT][2],
++                             const float *src);
++// Store one collected calibration array into the live record.
++int cal_store_array(int type, const void *array);
++// Rebuild the live record from its own arrays (header only changes applied).
++int cal_write_live_record(void);
++// Rebuild the live record point by point using `cb`.
++int cal_transform_record(cal_point_cb cb);
++// Index of the flash slot currently backing `cal_data`.
++int cal_active_slot_index(void);
++// Flash address of a slot's calibration arrays (used for SD save).
++#define CAL_SLOT_POINTS_ADDR(slot) \
++  (SAVE_PROP_CONFIG_ADDR + (uint32_t)(slot) * SAVE_PROP_CONFIG_SIZE + PROPS_CAL_OFFSET)
++// Rebuild the live record from an external image, read in chunks.
++int cal_record_read_arrays(int (*read_fn)(void *buf, uint32_t len));
++// Zero the live record's arrays.
++int cal_clear_record(void);
++
+ int config_save(void);
+ int config_recall(void);
+ 
+diff -ruN a/NANOVNA_STM32_F072/flash.c b/NANOVNA_STM32_F072/flash.c
+--- a/NANOVNA_STM32_F072/flash.c
++++ b/NANOVNA_STM32_F072/flash.c
+@@ -69,3 +69,20 @@
+     FLASH->CR &= ~FLASH_CR_PG;
+   }
+ }
++
++// RAM-6: program a half-word into already-erased flash, without erasing first.
++// Returns 0 on success, -1 if the destination is not blank (a stale page would
++// otherwise silently corrupt the calibration record).
++int flash_program_half_word_noerase(uint16_t *dst, uint16_t value)
++{
++  flash_unlock();
++  if (*dst != 0xFFFF)
++    return -1;
++  __IO uint16_t *p = dst;
++  flash_wait_for_last_operation();
++  FLASH->CR |= FLASH_CR_PG;
++  *p = value;
++  flash_wait_for_last_operation();
++  FLASH->CR &= ~FLASH_CR_PG;
++  return 0;
++}
+diff -ruN a/NANOVNA_STM32_F303/flash.c b/NANOVNA_STM32_F303/flash.c
+--- a/NANOVNA_STM32_F303/flash.c
++++ b/NANOVNA_STM32_F303/flash.c
+@@ -48,3 +48,19 @@
+     FLASH->CR&=~FLASH_CR_PG;
+   }
+ }
++
++// RAM-6: program a half-word into already-erased flash, without erasing first.
++// Returns 0 on success, -1 if the destination is not blank.
++int flash_program_half_word_noerase(uint16_t *dst, uint16_t value)
++{
++  flash_unlock();
++  if (*dst != 0xFFFF)
++    return -1;
++  __IO uint16_t *p = dst;
++  flash_wait_for_last_operation();
++  FLASH->CR|= FLASH_CR_PG;
++  *p = value;
++  flash_wait_for_last_operation();
++  FLASH->CR&=~FLASH_CR_PG;
++  return 0;
++}
+diff -ruN a/ui.c b/ui.c
+--- a/ui.c
++++ b/ui.c
+@@ -1747,24 +1747,53 @@
+ //=====================================================================================================
+ // Calibration save / load
+ //=====================================================================================================
++/*
++ * RAM-6: a `.cal` file is a byte-for-byte copy of a flash calibration record,
++ * so it stays interchangeable with the official firmware. The header is read
++ * into `current_props`; the calibration arrays are written into the scratch
++ * slot and then swapped in, so no 4 KB RAM staging is required.
++ */
+ static FILE_SAVE_CALLBACK(save_cal) {
+   (void)format;
+   UINT size;
+-  const char *src = (char*)&current_props;
+-  const uint32_t total = sizeof(current_props);
+-  return f_write(f, src, total, &size);
++  FRESULT res;
++  // Header from RAM, arrays from the live flash record.
++  res = f_write(f, &current_props, PROPS_HEADER_SIZE, &size);
++  if (res != FR_OK || size != PROPS_HEADER_SIZE)
++    return res;
++  res = f_write(f, (const void *)CAL_SLOT_POINTS_ADDR(cal_active_slot_index()),
++                PROPS_CAL_SIZE, &size);
++  return res;
++}
++
++static FIL *load_cal_file = NULL;
++
++// f_read() wrapper for cal_record_read_arrays(): returns 0 on success.
++static int load_cal_read(void *buf, uint32_t len)
++{
++  UINT size;
++  if (f_read(load_cal_file, buf, len, &size) != FR_OK || size != len)
++    return -1;
++  return 0;
+ }
+ 
+ static FILE_LOAD_CALLBACK(load_cal) {
+   (void)format;
+   UINT size;
+   uint32_t magic;
+-  char *src = (char*)&current_props + sizeof(magic);
+-  uint32_t total = sizeof(current_props) - sizeof(magic);
+-  // Compare file size and try read magic header, if all OK load it
+-  if (fno->fsize != sizeof(current_props) || f_read(f, &magic, sizeof(magic), &size) != FR_OK ||
+-      magic != PROPERTIES_MAGIC || f_read(f, src, total, &size) != FR_OK)
+-	  return "Format err";
++  if (fno->fsize != PROPS_RECORD_SIZE)
++    return "Format err";
++  if (f_read(f, &magic, sizeof(magic), &size) != FR_OK ||
++      magic != PROPERTIES_MAGIC)
++    return "Format err";
++  if (f_read(f, (char *)&current_props + sizeof(magic),
++             PROPS_HEADER_SIZE - sizeof(magic), &size) != FR_OK)
++    return "Format err";
++  // Stream the remaining arrays into the live record. They must not be read
++  // into flash directly, so cal_record_read_arrays() uses a small stack chunk.
++  load_cal_file = f;
++  if (cal_record_read_arrays(load_cal_read) != 0)
++    return "Format err";
+   load_properties(NO_SAVE_SLOT);
+   return NULL;
+ }
+@@ -2007,16 +2036,16 @@
+   { MT_ADV_CALLBACK, 0, "Empty %d", menu_save_acb },//87632
+   { MT_ADV_CALLBACK, 1, "Empty %d", menu_save_acb },
+   { MT_ADV_CALLBACK, 2, "Empty %d", menu_save_acb },
+-#if SAVEAREA_MAX > 3
++#if CAL_USER_SLOTS > 3
+   { MT_ADV_CALLBACK, 3, "Empty %d", menu_save_acb },
+ #endif
+-#if SAVEAREA_MAX > 4
++#if CAL_USER_SLOTS > 4
+   { MT_ADV_CALLBACK, 4, "Empty %d", menu_save_acb },
+ #endif
+-#if SAVEAREA_MAX > 5
++#if CAL_USER_SLOTS > 5
+   { MT_ADV_CALLBACK, 5, "Empty %d", menu_save_acb },
+ #endif
+-#if SAVEAREA_MAX > 6
++#if CAL_USER_SLOTS > 6
+   { MT_ADV_CALLBACK, 6, "Empty %d", menu_save_acb },
+ #endif
+ #ifdef __SD_FILE_BROWSER__
+@@ -2029,16 +2058,16 @@
+   { MT_ADV_CALLBACK, 0, "Empty %d", menu_recall_acb },
+   { MT_ADV_CALLBACK, 1, "Empty %d", menu_recall_acb },
+   { MT_ADV_CALLBACK, 2, "Empty %d", menu_recall_acb },
+-#if SAVEAREA_MAX > 3
++#if CAL_USER_SLOTS > 3
+   { MT_ADV_CALLBACK, 3, "Empty %d", menu_recall_acb },
+ #endif
+-#if SAVEAREA_MAX > 4
++#if CAL_USER_SLOTS > 4
+   { MT_ADV_CALLBACK, 4, "Empty %d", menu_recall_acb },
+ #endif
+-#if SAVEAREA_MAX > 5
++#if CAL_USER_SLOTS > 5
+   { MT_ADV_CALLBACK, 5, "Empty %d", menu_recall_acb },
+ #endif
+-#if SAVEAREA_MAX > 6
++#if CAL_USER_SLOTS > 6
+   { MT_ADV_CALLBACK, 6, "Empty %d", menu_recall_acb },
+ #endif
+ #ifdef __SD_FILE_BROWSER__

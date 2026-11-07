@@ -94,14 +94,15 @@ official_elf="$DIST/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.elf"
 if [[ -s "$unofficial_elf" ]]; then
   for symbol in usbtmc_process usbtmc_configure vna_usb_scpi_exec \
                 vna_usb_data_block; do
-    if ! arm-none-eabi-nm "$unofficial_elf" | grep -q " $symbol$"; then
+    # nm separates the type letter from the name with a tab, not a space.
+    if ! arm-none-eabi-nm "$unofficial_elf" | grep -qE "[[:space:]]$symbol$"; then
       echo "  unofficial ELF is missing symbol $symbol" >&2
       FAIL=1
     fi
   done
 fi
 
-if [[ -s "$official_elf" ]] && arm-none-eabi-nm "$official_elf" | grep -q " usbtmc_process$"; then
+if [[ -s "$official_elf" ]] && arm-none-eabi-nm "$official_elf" | grep -qE "[[:space:]]usbtmc_process$"; then
   echo "  official ELF unexpectedly contains the USBTMC bridge" >&2
   FAIL=1
 fi

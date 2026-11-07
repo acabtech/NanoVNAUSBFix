@@ -40,6 +40,7 @@ case "$VARIANT" in
       patches/0010-ram3-measure-memory.patch
       patches/0011-ram4-trace-index.patch
       patches/0012-ram8-headless.patch
+      patches/0013-ram6-flash-backed-cal-data.patch
     )
     ARTIFACT="NanoVNA-H-${PROJECT_VERSION}"
     MAKE_ARGS=(TARGET=F072 USBTMC=yes)

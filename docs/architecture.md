@@ -117,6 +117,20 @@ gated on `USBTMC=yes`); the current image is 91,448 bytes and leaves about
 `-O2` and its frozen size. Sweep timing should be re-measured on hardware with
 `:VNA:SWE:TIME?` and `:VNA:SWE:RATE?` before release.
 
+### Calibration storage (RAM-6)
+
+The 4,040-byte calibration array (`_cal_data`) is kept on flash, not in RAM.
+`properties_t` now holds only the 208-byte mutable header plus a checksum, and
+`cal_data` is a pointer into the live flash record. The two highest calibration
+slots form a ping-pong pair: the live record occupies one, the other is the
+erase target for the next write. `cal_collect()` adds one collected array and
+`cal_done()` derives Es/Er/Et point by point, each time rebuilding the record in
+the spare slot and swapping. This needs no RAM staging because the source record
+is only ever read while the destination is erased and programmed. User-visible
+slots are the low three (`CAL_USER_SLOTS`). The record layout is byte-identical
+to the upstream `properties_t` image, so flash slots and SD `.cal` files stay
+compatible with the official firmware.
+
 ### SCPI state without extra BSS
 
 The v0.1.0 link left no free BSS: `_bss_end` was already at the end of RAM, so
