@@ -1,0 +1,29 @@
+--- a/ui.c
++++ b/ui.c
+@@ -1761,9 +1761,23 @@
+   res = f_write(f, &current_props, PROPS_HEADER_SIZE, &size);
+   if (res != FR_OK || size != PROPS_HEADER_SIZE)
+     return res;
+-  res = f_write(f, (const void *)CAL_SLOT_POINTS_ADDR(cal_active_slot_index()),
+-                PROPS_CAL_SIZE, &size);
+-  return res;
++  const uint32_t arrays = CAL_SLOT_POINTS_ADDR(cal_active_slot_index());
++  res = f_write(f, (const void *)arrays, PROPS_CAL_SIZE, &size);
++  if (res != FR_OK)
++    return res;
++  // Record checksum word, so the file is exactly PROPS_RECORD_SIZE bytes and
++  // matches the layout the loaders (ours and the official firmware's) accept.
++  // Recompute over the bytes just written: the RAM header may have drifted
++  // from the flash record's header, so the stored checksum can be stale.
++  {
++    const uint32_t *w = (const uint32_t *)&current_props;
++    uint32_t value = 0, i;
++    for (i = 0; i < PROPS_HEADER_SIZE / 4; i++)
++      value = __ROR(value, 31) + w[i];
++    for (i = 0; i < PROPS_CAL_SIZE / 4; i++)
++      value = __ROR(value, 31) + ((const uint32_t *)arrays)[i];
++    return f_write(f, &value, sizeof(value), &size);
++  }
+ }
+ 
+ static FIL *load_cal_file = NULL;

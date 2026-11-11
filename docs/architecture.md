@@ -163,6 +163,16 @@ did not reload the saved header (so only the calibration arrays were restored,
 not the sweep), and the shell usage strings had swapped `printf` arguments. All
 three are verified on hardware.
 
+Two more ping-pong/record defects were fixed by `0018` and `0019`. Recall
+(`0018-cal-recall-pingpong.patch`) wrote into the fixed working slot without
+moving `cal_free_slot`, so after an intervening calibration the working and
+free slots were identical and the *next* write erased the live record; recall
+now builds into the free slot and swaps, like every other writer. The SD `.cal`
+export (`0019-cal-export-checksum.patch`) stopped 4 bytes short of
+`PROPS_RECORD_SIZE`: it omitted the trailing checksum word, so files it wrote
+were rejected by `load_cal` (and by the official firmware). The export now
+appends the checksum recomputed over the bytes it writes.
+
 A two-record in-place design (one user profile plus one working record, edited
 through a 2 KiB page-staging buffer) was prototyped and rejected: `cal_done()`
 must read all five 808-byte error-term arrays to derive Es/Er/Et, and those

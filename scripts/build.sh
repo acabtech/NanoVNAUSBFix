@@ -47,6 +47,8 @@ case "$VARIANT" in
       patches/0013-ram6-flash-backed-cal-data.patch
       patches/0016-flash1-unofficial-three-records.patch
       patches/0017-unofficial-build-o2.patch
+      patches/0018-cal-recall-pingpong.patch
+      patches/0019-cal-export-checksum.patch
     )
     ARTIFACT="NanoVNA-H-${PROJECT_VERSION}"
     MAKE_ARGS=(TARGET=F072 USBTMC=yes)

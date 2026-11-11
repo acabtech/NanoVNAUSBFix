@@ -129,6 +129,17 @@ Work in progress; entries are added as milestones land.
 
 ### Fixed
 
+- Fixed three calibration/RTC defects reported as GitHub issues #1-#3:
+  `caldata_recall()` now rebuilds the recalled record in the **free** ping-pong
+  slot and swaps, instead of always writing `CAL_SLOT_WORK`; the old code left
+  `cal_free_slot == cal_active_slot` after a prior calibration, so the next
+  `cal_store_array()`/`cal_transform_record()` erased the live record it read
+  from (issue #2, `0018`). The SD `.cal` export now appends the trailing 4-byte
+  record checksum, so `save_cal` writes the full 4,252-byte `PROPS_RECORD_SIZE`
+  the loader (and the official firmware) require; previously saved files were
+  rejected with `Format err` (issue #1, `0019`). The optional
+  `RTC->DR` default-time constant is corrected to `0x0026F101` — the old value
+  encoded an invalid BCD day and weekday 0 (issue #3).
 - Fixed the unofficial-image boot hang: `draw_cell()` clears `spi_buffer` with
   32-bit stores, but the unofficial BSS layout placed `spi_buffer` at a
   two-byte-aligned address. Cortex-M0 raises a HardFault on the unaligned

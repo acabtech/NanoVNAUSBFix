@@ -1,0 +1,29 @@
+--- a/data_storage.c
++++ b/data_storage.c
+@@ -272,12 +272,22 @@
+     // rebuilt with the *live* sweep/trace settings and the saved profile's
+     // header would never be restored.
+     memcpy(&current_props, src, PROPS_HEADER_SIZE);
+-    // Bring the user slot into the working half of the ping-pong pair.
+-    if (cal_record_write(CAL_SLOT_WORK, (int)id, -1, NULL) < 0)
++    // Bring the user slot into the ping-pong pair by building it in the free
++    // slot and swapping roles, exactly like the other record writers. Writing
++    // straight into CAL_SLOT_WORK used to leave cal_free_slot pointing at the
++    // active slot, so the next cal_store_array()/cal_transform_record() would
++    // erase the very record it reads from (dst == src) and destroy it.
++    if (cal_record_write(cal_free_slot, (int)id, -1, NULL) < 0)
+       return 1;
++    {
++      int tmp = cal_active_slot;
++      cal_active_slot = cal_free_slot;
++      cal_free_slot = tmp;
++    }
+   }
+-  cal_use_slot(CAL_SLOT_WORK);
+-  memcpy(&current_props, cal_slot_hdr(CAL_SLOT_WORK), PROPS_HEADER_SIZE);
++  cal_use_slot(cal_active_slot);
++  memcpy(&current_props, cal_slot_hdr(cal_active_slot), PROPS_HEADER_SIZE);
++  checksum_ok &= ~(1 << cal_active_slot);
+   lastsaveid = id;
+   return 0;
+ }

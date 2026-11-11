@@ -17,7 +17,7 @@
 +      // Default calendar when the RTC has never been set: 2026-11-01 00:00:00
 +      if (first_init) {
 +        RTC->TR = 0x00000000;       // 00:00:00
-+        RTC->DR = 0x002611E1;       // 2026-11-01, Sunday (BCD)
++        RTC->DR = 0x0026F101;       // 2026-11-01, Sunday (BCD: DU=01, MT|MU=11, WDU=7)
 +      }
      }
      // Finalizing of configuration procedure.
