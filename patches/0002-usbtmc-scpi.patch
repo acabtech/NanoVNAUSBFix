@@ -664,6 +664,7 @@ index 0000000..350ab9b
 +        left = 0;
 +        break;
 +      }
++      usbtmc_msg_bad = false;
 +      usbtmc_cmd_len = 0;
 +      usbtmc_msg_remaining = (uint32_t)p[4] |
 +                             ((uint32_t)p[5] << 8) |

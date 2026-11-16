@@ -55,6 +55,11 @@ if (( $# )); then
   FILE="$1"
 fi
 
+if (( INSTALL_UDEV )); then
+  recovery_install_udev
+  exit 0
+fi
+
 recovery_resolve_image "$FILE" official
 
 # --install-deps also guarantees the exact toolchain used for the release
@@ -66,10 +71,6 @@ fi
 # Required packages: install the repo package if openocd is missing.
 recovery_install_repo_pkg openocd openocd openocd
 
-if (( INSTALL_UDEV )); then
-  recovery_install_udev
-  exit 0
-fi
 if (( RECOVERY_INSTALL_DEPS )); then
   recovery_install_udev
 fi
