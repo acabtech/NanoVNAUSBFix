@@ -20,10 +20,10 @@ fetch:
 	./scripts/fetch-upstream.sh
 
 recover:
-	./scripts/recover-openocd.sh $(IMAGE)
+	./scripts/recover-openocd.sh "$(IMAGE)"
 
 recover-uart:
-	./scripts/recover-uart.sh $(IMAGE)
+	./scripts/recover-uart.sh "$(IMAGE)"
 
 clean:
 	rm -rf build dist

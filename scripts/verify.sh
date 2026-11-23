@@ -125,13 +125,15 @@ fi
 
 # Combined checksum manifest for release uploads. Release assets are uploaded
 # flat, so list bare filenames rather than the dist/<flavor>/ paths.
-(
-  cd "$DIST"
-  for file in official/*.bin official/*.hex official/*.elf \
-              unofficial/*.bin unofficial/*.hex unofficial/*.elf; do
-    sha256sum "$file" | sed 's|  .*/|  |'
-  done > SHA256SUMS
-)
+if (( ! FAIL )); then
+  (
+    cd "$DIST"
+    for file in official/*.bin official/*.hex official/*.elf \
+                unofficial/*.bin unofficial/*.hex unofficial/*.elf; do
+      sha256sum "$file" | sed 's|  .*/|  |'
+    done > SHA256SUMS
+  )
+fi
 
 if (( FAIL )); then
   echo "verification failed" >&2
