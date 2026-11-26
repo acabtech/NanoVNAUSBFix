@@ -7,8 +7,8 @@
 - both `.bin`, `.hex`, `.elf` and `SHA256SUMS` exist;
 - the `.bin` is no larger than the 128 KiB STM32F072 flash;
 - the `SHA256SUMS` files validate;
-- the unofficial ELF contains `usbtmc_process`, `usbtmc_configure` and
-  `vna_usb_scpi_exec`;
+- the unofficial ELF contains `usbtmc_process`, `usbtmc_configure`,
+  `vna_usb_scpi_exec` and `vna_usb_data_block`;
 - the official ELF does **not** contain the USBTMC bridge.
 
 CI also rebuilds from a clean work tree, so a broken patch or a changed
@@ -67,7 +67,8 @@ The M1/M2 command shapes added by
 [`0004-scpi-foundation-sweep-parity.patch`](../patches/0004-scpi-foundation-sweep-parity.patch)
 are recorded in
 [`testing/v0.2.0-scpi-foundation-contract.md`](v0.2.0-scpi-foundation-contract.md).
-That build is 91,384 bytes with `-Os`, inside the 96,256-byte unofficial budget.
+That build is 91,384 bytes with `-Os`, inside the 108,544-byte unofficial
+budget recorded above.
 The contract is firmware-build verified; run it on hardware to confirm the
 per-unit UID and sweep timing fields.
 

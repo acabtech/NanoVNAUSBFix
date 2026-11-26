@@ -7,6 +7,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 FAIL=0
 
+# Preflight: symbol inspection below must not silently pass on a missing or
+# broken toolchain, so fail closed before any nm call.
+command -v arm-none-eabi-nm >/dev/null 2>&1 || {
+  echo "error: missing arm-none-eabi-nm" >&2
+  exit 1
+}
+
 # Flash budgets. The STM32F072 has 128 KiB of flash. Since FLASH-1 the code
 # region (flash0) is flavor-specific, because each flavor reserves a different
 # amount of storage in flash7:
@@ -104,7 +111,7 @@ official_elf="$DIST/official/NanoVNA-H-1.3.1-omariglol-USB-PCLK.elf"
 # `set -o pipefail`: grep exits on the first match, nm dies of SIGPIPE and the
 # pipeline reports failure even though the symbol was present.
 if [[ -s "$unofficial_elf" ]]; then
-  unofficial_syms=$(arm-none-eabi-nm "$unofficial_elf" || true)
+  unofficial_syms=$(arm-none-eabi-nm "$unofficial_elf")
   for symbol in usbtmc_process usbtmc_configure vna_usb_scpi_exec \
                 vna_usb_data_block; do
     # nm separates the type letter from the name with a tab, not a space.
@@ -116,7 +123,7 @@ if [[ -s "$unofficial_elf" ]]; then
 fi
 
 if [[ -s "$official_elf" ]]; then
-  official_syms=$(arm-none-eabi-nm "$official_elf" || true)
+  official_syms=$(arm-none-eabi-nm "$official_elf")
   if grep -qE "[[:space:]]usbtmc_process$" <<< "$official_syms"; then
     echo "  official ELF unexpectedly contains the USBTMC bridge" >&2
     FAIL=1
