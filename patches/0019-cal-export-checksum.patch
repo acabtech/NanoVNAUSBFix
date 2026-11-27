@@ -1,6 +1,6 @@
 --- a/ui.c
 +++ b/ui.c
-@@ -1761,9 +1761,23 @@
+@@ -1761,9 +1761,26 @@
    res = f_write(f, &current_props, PROPS_HEADER_SIZE, &size);
    if (res != FR_OK || size != PROPS_HEADER_SIZE)
      return res;
@@ -9,8 +9,8 @@
 -  return res;
 +  const uint32_t arrays = CAL_SLOT_POINTS_ADDR(cal_active_slot_index());
 +  res = f_write(f, (const void *)arrays, PROPS_CAL_SIZE, &size);
-+  if (res != FR_OK)
-+    return res;
++  if (res != FR_OK || size != (UINT)PROPS_CAL_SIZE)
++    return res ? res : FR_DENIED;
 +  // Record checksum word, so the file is exactly PROPS_RECORD_SIZE bytes and
 +  // matches the layout the loaders (ours and the official firmware's) accept.
 +  // Recompute over the bytes just written: the RAM header may have drifted
@@ -22,7 +22,10 @@
 +      value = __ROR(value, 31) + w[i];
 +    for (i = 0; i < PROPS_CAL_SIZE / 4; i++)
 +      value = __ROR(value, 31) + ((const uint32_t *)arrays)[i];
-+    return f_write(f, &value, sizeof(value), &size);
++    res = f_write(f, &value, sizeof(value), &size);
++    if (res != FR_OK || size != sizeof(value))
++      return res ? res : FR_DENIED;
++    return FR_OK;
 +  }
  }
  
