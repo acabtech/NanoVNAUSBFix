@@ -1,6 +1,6 @@
 --- a/data_storage.c
 +++ b/data_storage.c
-@@ -272,12 +272,22 @@
+@@ -272,12 +272,27 @@
      // rebuilt with the *live* sweep/trace settings and the saved profile's
      // header would never be restored.
      memcpy(&current_props, src, PROPS_HEADER_SIZE);
@@ -11,8 +11,13 @@
 +    // straight into CAL_SLOT_WORK used to leave cal_free_slot pointing at the
 +    // active slot, so the next cal_store_array()/cal_transform_record() would
 +    // erase the very record it reads from (dst == src) and destroy it.
-+    if (cal_record_write(cal_free_slot, (int)id, -1, NULL) < 0)
++    if (cal_record_write(cal_free_slot, (int)id, -1, NULL) < 0) {
++      // cal_record_write() may have erased the free slot after `current_props`
++      // was overwritten above. Restore the still-active record's header so the
++      // live state stays consistent with cal_active_slot.
++      memcpy(&current_props, cal_slot_hdr(cal_active_slot), PROPS_HEADER_SIZE);
        return 1;
++    }
 +    {
 +      int tmp = cal_active_slot;
 +      cal_active_slot = cal_free_slot;
